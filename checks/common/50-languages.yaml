@@ -1,0 +1,230 @@
+schema_version: 3
+# Language toolchain prereqs that apply to every Posit product. Posit's
+# reproducibility model expects R/Python at /opt/<lang>/<version>/bin/<bin>
+# regardless of which product runs on the host (Workbench needs R for IDE
+# sessions; Connect runs R/Python for content; Package Manager mirrors
+# CRAN/PyPI). Quarto is rendered both by Workbench sessions and by Connect.
+checks:
+  - id: lang.r.versioned-install
+    title: At least one R install at /opt/R/<version>/bin/R
+    short_description: Looking for versioned R installs under /opt/R
+    category: Product
+    tags: [r]
+    why: |
+      Posit's reproducibility model expects versioned R installs under
+      /opt/R/<version> so multiple R versions can coexist. Workbench's
+      auto-scan reports findings to /var/lib/rstudio-server/r-versions on
+      startup; Connect picks up the same versions for content rendering.
+    references:
+      - https://docs.posit.co/ide/server-pro/admin/r/installing_r.html
+    primitive: dir
+    with:
+      path: /opt/R
+      must_exist: true
+      glob: "*/bin/R"
+      glob_min_matches: 1
+
+  - id: lang.python.versioned-install
+    title: At least one Python install at /opt/python/<version>/bin/python3
+    short_description: Looking for versioned Python installs under /opt/python
+    category: Product
+    tags: [python]
+    why: |
+      Posit's reproducibility model expects versioned Python installs under
+      /opt/python/<version>. Without them, Workbench projects pin against
+      system Python and break across upgrades; Connect content fails to
+      reproduce across deploys.
+    references:
+      - https://docs.posit.co/resources/install-python-uv.html
+    primitive: dir
+    with:
+      path: /opt/python
+      must_exist: true
+      glob: "*/bin/python3"
+      glob_min_matches: 1
+
+  - id: lang.quarto.present
+    title: Quarto is available on PATH
+    short_description: Checking quarto is on PATH or under /opt/quarto
+    category: Product
+    tags: [quarto]
+    why: |
+      RStudio Pro sessions ship a bundled Quarto, but VS Code, Positron, and
+      JupyterLab sessions need quarto on PATH. Connect renders Quarto content
+      server-side. Posit recommends a versioned install at
+      /opt/quarto/<version>/bin/quarto with a /usr/local/bin/quarto symlink
+      for PATH visibility.
+    references:
+      - https://docs.posit.co/resources/install-quarto.html
+    primitive: cmd
+    with:
+      cmd: |
+        if path=$(command -v quarto 2>/dev/null); then
+          echo "quarto on PATH: $path"
+          exit 0
+        fi
+        if found=$(ls /opt/quarto/*/bin/quarto 2>/dev/null); then
+          echo "quarto found under /opt/quarto: $(echo "$found" | tr '\n' ' ')"
+          exit 0
+        fi
+        echo "quarto is not on PATH and no install was found under /opt/quarto"
+        exit 1
+      expect_exit: 0
+
+  # User-install smoke tests. These verify the customer's *unprivileged*
+  # users can actually use the toolchains pev just discovered. We use the
+  # latest detected R / Python so the SE catches issues with the version
+  # they will actually deploy with, not an old one. Each runs as
+  # `unprivileged_user` (auto-detected when pev is non-root, prompted
+  # when root).
+  - id: lang.r.renv-user-install
+    title: Unprivileged user can install renv with the latest R
+    short_description: Installing renv as the unprivileged user (this can take a while)
+    category: Product
+    tags: [r, user-install]
+    applies_to:
+      requires: [r]
+    why: |
+      renv is the canonical R reproducibility tool at Posit. If a regular
+      user can't install it, the customer will hit the same blocker on the
+      first day of operations. Hits the host's latest /opt/R/<ver>/bin/R.
+      Runs from and writes under the user's $HOME — not /tmp — so the
+      check exercises the same path users actually use. Cleaned up on
+      both success and failure via trap.
+    references:
+      - https://rstudio.github.io/renv/articles/renv.html
+    primitive: cmd
+    with:
+      as_user: "{{ .Inputs.unprivileged_user }}"
+      cmd: |
+        if [ -z "$HOME" ] || [ ! -d "$HOME" ]; then
+          echo "user has no \$HOME directory ($HOME)"; exit 1
+        fi
+        cd "$HOME" || { echo "cannot cd to \$HOME=$HOME"; exit 1; }
+        D=$(mktemp -d "$HOME/.pev-renv-probe.XXXXXX") || exit 1
+        trap 'rm -rf "$D"' EXIT
+        export D
+        {{ .Facts.LatestR }} --vanilla --no-save --slave -e \
+          'lib <- Sys.getenv("D"); install.packages("renv", repos="https://packagemanager.posit.co/cran/latest", lib=lib); library("renv", lib.loc=lib)'
+      expect_exit: 0
+      timeout_seconds: 120
+
+  - id: lang.python.venv-tooling
+    title: A Python venv tool (uv or pip) is on PATH
+    short_description: Checking uv or pip is on PATH
+    category: Product
+    tags: [python, user-install]
+    applies_to:
+      requires: [python]
+    why: |
+      Creating a virtual environment needs either uv (Posit's recommended
+      tool) or pip on PATH. If neither is on PATH, pev cannot run the venv
+      creation smoke test — the host is still installable (a versioned
+      Python under /opt/python exists), but an unprivileged user typing
+      `uv` or `pip` would hit command-not-found, so this is surfaced as an
+      advisory. Install uv, or put pip on PATH (e.g. apt install
+      python3-pip / a /opt/python/<ver>/bin on PATH), to enable the
+      lang.python.uv-venv or lang.python.pip-venv smoke test.
+    remediation: |
+      Install uv (https://docs.posit.co/resources/install-python-uv.html)
+      or ensure pip/pip3 is on PATH. A versioned Python under
+      /opt/python/<ver>/bin ships pip but is intentionally off PATH; add
+      that bin dir to PATH or install the system python3-pip package.
+    references:
+      - https://docs.posit.co/resources/install-python-uv.html
+    primitive: cmd
+    with:
+      # PASS when either tool is reachable as a bare command — the same
+      # $PATH visibility a user gets. WARN (exit 2) when neither is, so the
+      # run stays green-but-noted rather than failing an installable host.
+      cmd: |
+        if command -v uv >/dev/null 2>&1; then
+          echo "uv on PATH: $(command -v uv)"
+          exit 0
+        fi
+        if command -v pip3 >/dev/null 2>&1 || command -v pip >/dev/null 2>&1; then
+          echo "pip on PATH: $(command -v pip3 || command -v pip)"
+          exit 0
+        fi
+        echo "neither uv nor pip is on PATH; venv smoke test will be skipped (install uv or put pip on PATH)"
+        exit 2
+      expect_exit: 0
+      warn_exit: 2
+      timeout_seconds: 5
+
+  - id: lang.python.uv-venv
+    title: Unprivileged user can create a uv venv with the latest Python
+    short_description: Creating a uv venv as the unprivileged user
+    category: Product
+    tags: [python, user-install, uv]
+    applies_to:
+      requires: [python, uv]
+    why: |
+      uv is Posit's recommended Python venv tool. A failure here usually
+      means $HOME is noexec, the user has no shell home directory, or
+      PyPI egress is blocked — all install-blockers worth catching
+      pre-flight. Gated on uv being present (see lang.python.venv-tooling);
+      runs from and writes under $HOME so the check exercises the same path
+      users actually use. Cleaned up on both success and failure via trap.
+    primitive: cmd
+    with:
+      as_user: "{{ .Inputs.unprivileged_user }}"
+      cmd: |
+        if [ -z "$HOME" ] || [ ! -d "$HOME" ]; then
+          echo "user has no \$HOME directory ($HOME)"; exit 1
+        fi
+        cd "$HOME" || { echo "cannot cd to \$HOME=$HOME"; exit 1; }
+        D=$(mktemp -d "$HOME/.pev-uv-probe.XXXXXX") || exit 1
+        trap 'rm -rf "$D"' EXIT
+        uv venv --python {{ .Facts.LatestPython }} "$D/.venv" && \
+          "$D/.venv/bin/python" -c "import sys; print(sys.executable)"
+      expect_exit: 0
+      timeout_seconds: 60
+
+  - id: lang.python.pip-venv
+    title: Unprivileged user can create a venv via python -m venv + pip install
+    short_description: Creating a python -m venv + pip install as the unprivileged user
+    category: Product
+    tags: [python, user-install, pip]
+    applies_to:
+      # Only run when uv is NOT present — if both are present, the uv
+      # check above is the more authoritative signal.
+      requires: [python, pip]
+    why: |
+      The fallback path when uv is unavailable is `python -m venv` plus
+      `pip install`. Gated on pip being present (see
+      lang.python.venv-tooling). Catches missing python3-venv (Ubuntu) and
+      outbound PyPI blockers. Runs from and writes under $HOME so the check
+      exercises the same path users actually use. Cleaned up on both
+      success and failure via trap.
+    primitive: cmd
+    with:
+      as_user: "{{ .Inputs.unprivileged_user }}"
+      cmd: |
+        if [ -z "$HOME" ] || [ ! -d "$HOME" ]; then
+          echo "user has no \$HOME directory ($HOME)"; exit 1
+        fi
+        cd "$HOME" || { echo "cannot cd to \$HOME=$HOME"; exit 1; }
+        D=$(mktemp -d "$HOME/.pev-pip-probe.XXXXXX") || exit 1
+        trap 'rm -rf "$D"' EXIT
+        {{ .Facts.LatestPython }} -m venv "$D/.venv" && \
+          "$D/.venv/bin/pip" install --quiet --no-input pip setuptools wheel && \
+          "$D/.venv/bin/python" -c "import pip, sys; print(sys.executable)"
+      expect_exit: 0
+      timeout_seconds: 120
+
+  - id: lang.idp.metadata
+    title: IdP metadata or discovery URL is reachable
+    short_description: Probing IdP SAML metadata / OIDC discovery URL
+    category: Identity
+    tags: [auth, idp]
+    why: |
+      SAML metadata or OIDC discovery must be reachable from the host
+      during configuration; auth misconfiguration is the most common
+      single-session blocker observed during install runbooks. Applies
+      to any Posit product that consumes the customer's IdP (Workbench,
+      Connect).
+    primitive: http
+    with:
+      url: "{{ .Inputs.idp_metadata_url }}"
+      timeout_seconds: 8

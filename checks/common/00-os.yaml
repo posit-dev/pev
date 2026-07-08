@@ -1,0 +1,85 @@
+schema_version: 3
+checks:
+  - id: os.supported
+    title: Operating system is supported by Posit professional products
+    short_description: Verifying OS is on Posit's supported matrix
+    category: Operating System
+    tags: [os]
+    why: |
+      Posit Workbench, Posit Connect, and Posit Package Manager support
+      Ubuntu 22.04, Ubuntu 24.04, and RHEL 8/9/10 (and binary-compatible
+      rebuilds: Alma Linux, Rocky Linux, Oracle Linux). Ubuntu 20.04 is
+      end-of-support and not supported by current product releases. Ubuntu
+      26.04 has not yet been added to the supported list. CentOS Linux 8 is
+      accepted (a binary-compatible RHEL 8 rebuild), but CentOS Stream 9/10
+      are upstream of RHEL — not binary-identical rebuilds — and are not
+      supported; use RHEL, Alma, or Rocky for 9/10.
+    references:
+      - https://docs.posit.co/platform-support.html
+    primitive: cmd
+    with:
+      # No applies_to.os here on purpose: the catalog must FAIL on hosts
+      # that fall outside the supported matrix, not silently SKIP them.
+      # The regex enumerates the supported IDs; anything else exits 1.
+      # On failure echo a customer-readable line as the LAST line so
+      # cmd's failReason() helper picks it up instead of falling back
+      # to "command failed (exit 1)".
+      cmd: |
+        . /etc/os-release 2>/dev/null
+        id=${ID:-unknown}
+        ver=${VERSION_ID:-unknown}
+        case "$id" in
+          ubuntu)
+            case "$ver" in 22.04|24.04)
+              echo "$id $ver is supported"
+              exit 0 ;;
+            esac ;;
+          rhel|redhat|almalinux|rocky|ol|oracle)
+            case "${ver%%.*}" in 8|9|10)
+              echo "$id $ver is supported"
+              exit 0 ;;
+            esac ;;
+          centos)
+            # CentOS Linux 8 was a downstream, binary-compatible RHEL 8 rebuild,
+            # so it stays on the matrix. CentOS Stream 9/10 track UPSTREAM of the
+            # matching RHEL release and are NOT binary-identical rebuilds, so they
+            # are deliberately rejected — use RHEL/Alma/Rocky for 9/10.
+            major=${ver%%.*}
+            case "$major" in
+              8)
+                echo "$id $ver is supported (binary-compatible with RHEL 8)"
+                exit 0 ;;
+              9|10)
+                echo "centos $ver is CentOS Stream — upstream of RHEL $major, not a binary-compatible rebuild; not on Posit's supported matrix (use RHEL/Alma/Rocky $major)"
+                exit 1 ;;
+            esac ;;
+        esac
+        echo "$id $ver is not on Posit's supported matrix (Ubuntu 22.04/24.04, RHEL 8/9/10)"
+        exit 1
+      expect_exit: 0
+      timeout_seconds: 5
+
+  - id: os.architecture.amd64-or-arm64
+    title: CPU architecture is amd64 or arm64
+    short_description: Verifying CPU architecture is amd64 or arm64
+    category: Operating System
+    tags: [os, arch]
+    why: |
+      Posit professional products ship amd64 and arm64 Linux builds only.
+      Other architectures cannot install the official packages.
+    primitive: cmd
+    with:
+      # No applies_to.arch here so unsupported architectures FAIL instead of
+      # SKIPping. (In practice pev itself only ships amd64+arm64, so this is
+      # belt-and-suspenders against a future cross-compiled binary.)
+      cmd: |
+        arch=$(uname -m)
+        case "$arch" in
+          x86_64|aarch64)
+            echo "$arch is supported"
+            exit 0 ;;
+        esac
+        echo "$arch is not a supported architecture (Posit ships amd64/x86_64 and arm64/aarch64 only)"
+        exit 1
+      expect_exit: 0
+      timeout_seconds: 5

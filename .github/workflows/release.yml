@@ -1,0 +1,55 @@
+name: release
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+  id-token: write   # cosign keyless signing
+  packages: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      # cosign-installer publishes point releases only (no floating @v4
+      # tag exists). v4.1.2 ships cosign 3.x, which defaults
+      # `--new-bundle-format` on; .goreleaser.yaml signs with `--bundle`
+      # and produces a single `.bundle` artifact (signature + cert chain)
+      # in place of the legacy `.sig` + `.pem` pair. Bump deliberately
+      # along with .goreleaser.yaml and the verify step below.
+      - uses: sigstore/cosign-installer@v4.1.2
+      - uses: anchore/sbom-action/download-syft@v0
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          # `latest` triggers a "locking to ~> v2" warning each release run;
+          # pin explicitly so the version is visible in the workflow file.
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Self-verify the signature we just produced. If goreleaser's signing
+      # block ever silently regresses (wrong --bundle path, artifact not
+      # tracked, wrong selector, etc.) this step fails and the release does
+      # NOT publish binaries downstream tooling can't verify.
+      - name: Verify cosign signature on checksums
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          checksum="dist/pev_${version}_checksums.txt"
+          test -f "$checksum"           || { echo "no checksums file at $checksum"; exit 1; }
+          test -f "${checksum}.bundle"  || { echo "no .bundle at ${checksum}.bundle"; exit 1; }
+          cosign verify-blob \
+            --bundle "${checksum}.bundle" \
+            --new-bundle-format \
+            --certificate-identity-regexp "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@.*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$checksum"

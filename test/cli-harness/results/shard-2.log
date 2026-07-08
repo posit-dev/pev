@@ -1,0 +1,23 @@
+[PASS ] ni-listchecks                       0.2s  completed
+[PASS ] ni-diff_help                        0.1s  completed
+[PASS ] ni-prod-idp-0                       0.4s  completed
+[PASS ] ni-prod-idp-8                       0.3s  completed
+[PASS ] ni-prod-idp-16                      0.2s  completed
+[PASS ] ni-prod-idp-24                      0.2s  completed
+[PASS ] ni-prod-idp-32                      0.2s  completed
+[PASS ] ni-prod-idp-40                      0.0s  completed
+[PASS ] ni-prod-idp-48                      0.3s  completed
+[PASS ] ni-prod-idp-56                      0.2s  completed
+[PASS ] ni-out-prof-1                       0.2s  completed
+[PASS ] ni-out-prof-9                       0.3s  completed
+[PASS ] ni-out-prof-17                      0.6s  completed
+[PASS ] ni-out-prof-25                      0.2s  completed
+[PASS ] ni-out-prof-33                      0.0s  completed
+[PASS ] ni-out-prof-41                      0.2s  completed
+[PASS ] ni-skip-tags                        0.2s  completed
+[PASS ] yes-workbench                       0.2s  completed
+[PASS ] iv-wb-optin-first                   3.7s  completed
+[PASS ] iv-idp-confirm-oidc                 4.2s  completed
+[PASS ] iv-ctrlc-in-select                  4.0s  interrupted
+
+21/21 PASS, 0 need attention

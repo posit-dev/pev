@@ -1,0 +1,25 @@
+name: Bug report
+description: A check is wrong, the report is broken, or pev itself misbehaves.
+title: "[bug] "
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect; what did you observe instead?
+    validations: { required: true }
+  - type: input
+    id: pev_version
+    attributes: { label: pev version (`pev version`) }
+    validations: { required: true }
+  - type: input
+    id: os
+    attributes: { label: OS (Ubuntu 22.04 / 24.04, RHEL/Alma 8/9/10) }
+    validations: { required: true }
+  - type: textarea
+    id: report
+    attributes:
+      label: pev report excerpt or pev-log file
+      description: Paste the relevant Findings rows or attach the JSON sidecar / pev-log.
+    validations: { required: false }

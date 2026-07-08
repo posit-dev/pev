@@ -1,0 +1,43 @@
+schema_version: 3
+checks:
+  - id: pkg.openssl-dev
+    title: openssl development headers installed
+    short_description: Checking openssl development headers are installed
+    tags: [packages, build-deps]
+    applies_to:
+      products: [workbench, connect, packagemanager]
+    why: |
+      Many R and Python packages compile against libssl. Missing headers cause
+      cryptic install failures for end users post-launch.
+    primitive: pkg
+    with:
+      manager: auto
+      any_of: [libssl-dev, openssl-devel]
+
+  - id: pkg.libcurl-dev
+    title: libcurl development headers installed
+    short_description: Checking libcurl development headers are installed
+    tags: [packages, build-deps]
+    applies_to:
+      products: [workbench, connect, packagemanager]
+    why: |
+      Required by R packages such as curl and httr for HTTP work; Python's
+      pycurl needs the same. Missing headers fail at compile time.
+    primitive: pkg
+    with:
+      manager: auto
+      any_of: [libcurl4-openssl-dev, libcurl-devel]
+
+  - id: pkg.libxml2-dev
+    title: libxml2 development headers installed
+    short_description: Checking libxml2 development headers are installed
+    tags: [packages, build-deps]
+    applies_to:
+      products: [workbench, connect, packagemanager]
+    why: |
+      Required by R's xml2/XML packages and Python's lxml. Among the most
+      common silent dependencies for analytics workloads.
+    primitive: pkg
+    with:
+      manager: auto
+      any_of: [libxml2-dev, libxml2-devel]

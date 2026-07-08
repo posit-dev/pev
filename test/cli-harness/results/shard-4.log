@@ -1,0 +1,23 @@
+[PASS ] ni-discover_format_json             0.2s  completed
+[PASS ] ni-completion_zsh                   0.0s  completed
+[PASS ] ni-prod-idp-2                       0.2s  completed
+[PASS ] ni-prod-idp-10                      0.3s  completed
+[PASS ] ni-prod-idp-18                      0.2s  completed
+[PASS ] ni-prod-idp-26                      0.0s  completed
+[PASS ] ni-prod-idp-34                      0.2s  completed
+[PASS ] ni-prod-idp-42                      0.2s  completed
+[PASS ] ni-prod-idp-50                      0.0s  completed
+[PASS ] ni-prod-idp-58                      0.4s  completed
+[PASS ] ni-out-prof-3                       0.5s  completed
+[PASS ] ni-out-prof-11                      0.3s  completed
+[PASS ] ni-out-prof-19                      0.3s  completed
+[PASS ] ni-out-prof-27                      0.4s  completed
+[PASS ] ni-out-prof-35                      0.0s  completed
+[PASS ] ni-license-missing                  0.3s  completed
+[PASS ] ni-review-skipped                   0.3s  completed
+[PASS ] iv-none-default                     0.4s  completed
+[PASS ] iv-connect-optin                    4.9s  completed
+[PASS ] iv-ctrlz-at-multiselect             0.9s  interrupted
+[PASS ] iv-ctrlc-then-ctrlz                 1.1s  interrupted
+
+21/21 PASS, 0 need attention

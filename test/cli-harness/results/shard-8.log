@@ -1,0 +1,22 @@
+[PASS ] ni-help                             0.0s  completed
+[PASS ] ni-diff-json                        0.0s  completed
+[PASS ] ni-prod-idp-6                       0.2s  completed
+[PASS ] ni-prod-idp-14                      0.2s  completed
+[PASS ] ni-prod-idp-22                      0.4s  completed
+[PASS ] ni-prod-idp-30                      0.5s  completed
+[PASS ] ni-prod-idp-38                      0.3s  completed
+[PASS ] ni-prod-idp-46                      0.3s  completed
+[PASS ] ni-prod-idp-54                      0.0s  completed
+[PASS ] ni-prod-idp-62                      0.3s  completed
+[PASS ] ni-out-prof-7                       0.3s  completed
+[PASS ] ni-out-prof-15                      0.4s  completed
+[PASS ] ni-out-prof-23                      0.2s  completed
+[PASS ] ni-out-prof-31                      0.0s  completed
+[PASS ] ni-out-prof-39                      0.3s  completed
+[PASS ] ni-checksfile-missing               0.3s  completed
+[PASS ] ni-everything                       0.5s  completed
+[PASS ] iv-deselect-sentinel-wb             3.6s  completed
+[PASS ] iv-hostname-skip-word               3.5s  completed
+[PASS ] iv-ctrlz-mid-confirms               4.3s  interrupted
+
+20/20 PASS, 0 need attention

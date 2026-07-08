@@ -1,0 +1,190 @@
+schema_version: 3
+# Egress checks. Every host is verified with a real HTTP GET/HEAD that must
+# return 200, against a path that serves real Posit-controlled (or upstream)
+# content. A bare TCP dial would pass through a transparent proxy that
+# terminates :443 but blocks the request; a 200 on a real path will not.
+# We deliberately do not accept 403/4xx as "reachable" — a corporate WAF
+# blocking the request returns 403 indistinguishably from a CloudFront
+# directory listing, so accepting 403 would PASS the very environment this
+# check exists to catch.
+# Reference: https://docs.posit.co/getting-started/networking.html
+checks:
+  - id: net.egress.cdn-rstudio
+    title: HTTPS GET cdn.rstudio.com Pro Drivers installer returns 200
+    short_description: Probing egress to cdn.rstudio.com (Pro Drivers)
+    category: Networking
+    tags: [network, egress]
+    why: |
+      cdn.rstudio.com hosts the Posit Pro Drivers archive. The bucket root
+      returns 403 by design (no directory listing), so we GET an immutable
+      installer artifact under /drivers/7C152C12/. A 200 here proves real
+      content is reachable; a 403/timeout indicates the egress path is
+      blocked or intercepted.
+    references:
+      - https://docs.posit.co/pro-drivers/server/index.html
+      - https://docs.posit.co/getting-started/networking.html
+    primitive: http
+    with:
+      url: https://cdn.rstudio.com/drivers/7C152C12/installer/rstudio-drivers_2021.10.0_amd64.deb
+      method: HEAD
+      accept_status: [200]
+      timeout_seconds: 8
+
+  - id: net.egress.cdn-posit
+    title: HTTPS GET cdn.posit.co PPM installer returns 200
+    short_description: Probing egress to cdn.posit.co (product installers)
+    category: Networking
+    tags: [network, egress]
+    why: |
+      cdn.posit.co serves the modern installer artifacts for Posit professional
+      products. Bucket root returns 403 by design, so we HEAD a published PPM
+      installer. The pinned version must remain in Posit's supported window;
+      bump on each PPM EOL.
+    references:
+      - https://docs.posit.co/supported-versions/package-manager.html
+      - https://docs.posit.co/getting-started/networking.html
+    primitive: http
+    with:
+      url: https://cdn.posit.co/package-manager/deb/amd64/rstudio-pm_2025.04.4-13_amd64.deb
+      method: HEAD
+      accept_status: [200]
+      timeout_seconds: 8
+
+  - id: net.egress.download2-rstudio
+    title: HTTPS GET download2.rstudio.org returns 200
+    short_description: Probing egress to download2.rstudio.org
+    category: Networking
+    tags: [network, egress]
+    why: |
+      download2.rstudio.org serves the legacy installer manifests still used
+      by some product release channels. Bare host root returns 200.
+    references:
+      - https://docs.posit.co/ide/server-pro/admin/getting_started/installation/installation.html
+      - https://docs.posit.co/getting-started/networking.html
+    primitive: http
+    with:
+      url: https://download2.rstudio.org/
+      method: HEAD
+      accept_status: [200]
+      timeout_seconds: 5
+
+  - id: net.egress.license-activation
+    title: HTTPS GET www.wyday.com returns 200 (license activation)
+    short_description: Probing egress to wyday.com (online license activation)
+    category: Networking
+    tags: [network, egress, license]
+    why: |
+      Online license-key activation contacts wyDay's TurboFloat service at
+      www.wyday.com. Not required when activating with a license file (.lic),
+      but the most common surprise during install sessions when keys are used.
+      Root redirects 301 -> https://wyday.com/ which returns 200; the HTTP
+      client follows redirects.
+    references:
+      - https://docs.posit.co/ide/server-pro/admin/license_management/license_management.html
+      - https://docs.posit.co/getting-started/networking.html
+    primitive: http
+    with:
+      url: https://www.wyday.com/
+      method: HEAD
+      accept_status: [200]
+      timeout_seconds: 5
+
+  - id: net.egress.packagemanager-posit-ping
+    title: HTTPS GET packagemanager.posit.co/__ping__ returns 200
+    short_description: Probing egress to packagemanager.posit.co
+    category: Networking
+    tags: [network, egress, packages]
+    why: |
+      Public Package Manager fronts CRAN/PyPI for users without a private PPM.
+      Workbench and Connect resolve packages here when no internal repository is
+      configured. /__ping__ is the documented unauthenticated health endpoint.
+    references:
+      - https://docs.posit.co/rspm/admin/server-management.html#health-check
+    primitive: http
+    with:
+      url: https://packagemanager.posit.co/__ping__
+      accept_status: [200]
+      timeout_seconds: 5
+
+  - id: net.egress.p3m
+    title: HTTPS GET p3m.dev/__ping__ returns 200 (Posit Public Package Manager)
+    short_description: Probing egress to p3m.dev (Public Package Manager)
+    category: Networking
+    tags: [network, egress, packages]
+    why: |
+      p3m.dev is the new public hostname for Posit's package mirror, running
+      the same Package Manager software as packagemanager.posit.co. The
+      /__ping__ health endpoint is undocumented for this host but behaves
+      identically; reachability ensures the new domain is resolvable when
+      networking allowlists are tight.
+    references:
+      - https://docs.posit.co/getting-started/networking.html
+    primitive: http
+    with:
+      url: https://p3m.dev/__ping__
+      accept_status: [200]
+      timeout_seconds: 5
+
+  - id: net.egress.cran
+    title: HTTPS GET cran.r-project.org PACKAGES index returns 200
+    short_description: Probing egress to cran.r-project.org (CRAN PACKAGES index)
+    category: Networking
+    tags: [network, egress, packages]
+    why: |
+      Default CRAN mirror used when sites do not redirect to a private PPM.
+      We GET /src/contrib/PACKAGES.gz — the same metadata file
+      available.packages() fetches — so a 200 proves real R-package
+      reachability rather than just a TLS handshake.
+    primitive: http
+    with:
+      url: https://cran.r-project.org/src/contrib/PACKAGES.gz
+      method: HEAD
+      accept_status: [200]
+      timeout_seconds: 8
+
+  - id: net.egress.bioconductor
+    title: HTTPS GET bioconductor.org returns 200
+    short_description: Probing egress to bioconductor.org
+    category: Networking
+    tags: [network, egress, packages]
+    why: |
+      Bioconductor packages are commonly required by Workbench users.
+      Reachability avoids surprise BiocManager::install() hangs.
+    primitive: http
+    with:
+      url: https://bioconductor.org/
+      method: HEAD
+      accept_status: [200]
+      timeout_seconds: 5
+
+  - id: net.egress.pypi
+    title: HTTPS GET pypi.org/simple/ returns 200
+    short_description: Probing egress to pypi.org/simple/ (pip index)
+    category: Networking
+    tags: [network, egress, packages]
+    why: |
+      PyPI's /simple/ index is the canonical endpoint pip resolves against.
+      A 200 here proves real package-index reachability, not just a TLS
+      handshake against the edge.
+    primitive: http
+    with:
+      url: https://pypi.org/simple/
+      method: HEAD
+      accept_status: [200]
+      timeout_seconds: 5
+
+  - id: net.egress.pypi-files
+    title: HTTPS GET files.pythonhosted.org returns 200
+    short_description: Probing egress to files.pythonhosted.org (pip downloads)
+    category: Networking
+    tags: [network, egress, packages]
+    why: |
+      PyPI splits metadata (pypi.org) from package files
+      (files.pythonhosted.org). Both must be reachable for `pip install`
+      to complete.
+    primitive: http
+    with:
+      url: https://files.pythonhosted.org/
+      method: HEAD
+      accept_status: [200]
+      timeout_seconds: 5

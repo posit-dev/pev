@@ -1,0 +1,99 @@
+schema_version: 3
+# Distro package-manager health. Posit installers shell out to apt/dnf to
+# pull system dependencies; if the manager itself is broken (stale apt
+# index, dnf metadata cache poisoned, repo URL behind a proxy not in env)
+# the install fails in confusing places. These checks surface that early.
+checks:
+  - id: pkg-mgr.apt.update
+    title: apt-get update succeeds
+    short_description: Running apt-get update against configured repos
+    category: Packages
+    tags: [packages, apt]
+    applies_to:
+      os: [ubuntu-22.04, ubuntu-24.04]
+      requires: [apt]
+    requires_root: true
+    why: |
+      A failing `apt-get update` means the host can't refresh the package
+      index — either a missing sources.list line, a transient mirror
+      outage, or (most often on customer hosts) outbound 80/443 blocked
+      to the configured archive. apt errors here mean every Posit
+      installer subcommand will fail downstream.
+    primitive: cmd
+    with:
+      cmd: "apt-get update -qq"
+      expect_exit: 0
+      timeout_seconds: 120
+
+  - id: pkg-mgr.apt.repolist-fresh
+    title: apt repository metadata is recent (< 30 days)
+    short_description: Checking apt metadata freshness (< 30 days)
+    category: Packages
+    tags: [packages, apt]
+    applies_to:
+      os: [ubuntu-22.04, ubuntu-24.04]
+      requires: [apt]
+    why: |
+      Stale apt metadata produces "package not found" errors for packages
+      that DO exist upstream. Detecting an old /var/lib/apt/lists timestamp
+      gives the SE a heads-up before the customer's first install attempt.
+    primitive: cmd
+    with:
+      # Three outcomes:
+      #   - no list files at all   → SKIP (apt-get update has never run on
+      #                                    this host; pkg-mgr.apt.update
+      #                                    will catch a real failure)
+      #   - newest file < 30 days  → PASS (exit 0)
+      #   - everything ≥ 30 days   → FAIL (exit 1) with the stale path
+      cmd: |
+        dir=/var/lib/apt/lists
+        if [ ! -d "$dir" ] || [ -z "$(find "$dir" -maxdepth 1 -type f -print -quit)" ]; then
+          echo "no apt list files present (apt-get update has not been run)"
+          exit 2
+        fi
+        if find "$dir" -maxdepth 1 -type f -mtime -30 | grep -q .; then
+          echo "apt metadata is current (newest file under 30 days old)"
+          exit 0
+        fi
+        oldest=$(find "$dir" -maxdepth 1 -type f -mtime +30 | head -1)
+        echo "apt metadata is stale (>30d); e.g. ${oldest:-unknown}"
+        exit 1
+      expect_exit: 0
+      skip_exit: 2
+
+  - id: pkg-mgr.dnf.repolist
+    title: dnf repolist succeeds
+    short_description: Listing enabled dnf repositories
+    category: Packages
+    tags: [packages, dnf]
+    applies_to:
+      os: [rhel-8, rhel-9, rhel-10]
+      requires: [dnf]
+    why: |
+      `dnf repolist` failing means the configured repos are unreachable,
+      have invalid GPG settings, or (UBI hosts only) the system isn't
+      registered. Every Posit installer pull will fail downstream.
+    primitive: cmd
+    with:
+      cmd: "dnf -q repolist --enabled"
+      expect_exit: 0
+      timeout_seconds: 60
+
+  - id: pkg-mgr.dnf.makecache
+    title: dnf makecache succeeds
+    short_description: Refreshing dnf metadata cache (this can take a while)
+    category: Packages
+    tags: [packages, dnf]
+    applies_to:
+      os: [rhel-8, rhel-9, rhel-10]
+      requires: [dnf]
+    requires_root: true
+    why: |
+      Even when the repos enumerate, makecache has to actually fetch
+      metadata. A failure here usually means an outbound proxy isn't
+      configured for dnf (separate from the system http_proxy env).
+    primitive: cmd
+    with:
+      cmd: "dnf -q makecache --refresh"
+      expect_exit: 0
+      timeout_seconds: 180

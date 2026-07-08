@@ -1,0 +1,116 @@
+name: e2e
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * *"   # nightly 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The container OS exercises both the Ubuntu and RHEL-family code paths.
+        # Alma 9/10 substitute for RHEL 9/10 (publicly pullable; UBI requires auth).
+        # We run as root inside the container so apt-get/dnf can fetch the minimal
+        # tools pev needs. Non-root coverage is exercised via /tmp/pev-nonroot
+        # below by su'ing to nobody after the install layer.
+        image:
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - almalinux:9
+          - almalinux:10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build pev binary
+        env: { CGO_ENABLED: 0 }
+        run: go build -trimpath -ldflags "-s -w" -o pev ./
+      - name: Run pev inside ${{ matrix.image }}
+        run: |
+          set -e
+          docker run --rm \
+            -v "$PWD":/work -w /work \
+            "${{ matrix.image }}" \
+            bash -c '
+              set -e
+              if command -v apt-get >/dev/null; then
+                apt-get update -qq
+                apt-get install -yqq --no-install-recommends ca-certificates curl iproute2 procps openssl >/dev/null
+              elif command -v dnf >/dev/null; then
+                # --allowerasing handles the curl-minimal vs full curl conflict on Alma.
+                # util-linux ships runuser/su, which the minimal alma:10 image omits.
+                dnf -y --allowerasing install ca-certificates curl iproute procps-ng openssl which util-linux >/dev/null
+              fi
+
+              echo "::group::pev version"
+              ./pev version
+              echo "::endgroup::"
+
+              echo "::group::pev discover (root)"
+              ./pev discover
+              echo "::endgroup::"
+
+              # python3 ships in every matrix image and powers
+              # test/e2e/validate-report.py — install on demand if a
+              # minimal image omits it.
+              if ! command -v python3 >/dev/null; then
+                if command -v apt-get >/dev/null; then apt-get install -yqq --no-install-recommends python3 >/dev/null
+                elif command -v dnf >/dev/null; then dnf -y install python3 >/dev/null
+                fi
+              fi
+
+              echo "::group::pev assess (root, no egress)"
+              # No Posit products are installed in these clean images, so
+              # workbench/connect/ppm presence checks fail by design and
+              # the engine exits non-zero. We accept that specific outcome
+              # but still validate report content — a regression that
+              # flips every check to "unknown" (broken primitive registry,
+              # YAML loader crash) would otherwise ship green under the
+              # earlier "test -f *.json" gate.
+              # --products explicitly opens applies_to.products gates;
+              # auto-detect would SKIP every per-product check.
+              ./pev assess --non-interactive --products workbench,connect,packagemanager \
+                --out-dir /tmp/pev-root --skip-tags egress \
+                && root_rc=0 || root_rc=$?
+              echo "root assess exited $root_rc"
+              ls /tmp/pev-root/
+              root_json=$(ls /tmp/pev-root/pev-report-*.json | head -1)
+              test -n "$root_json" || { echo "no JSON report"; exit 1; }
+              test -f "${root_json%.json}.md" || { echo "no Markdown report"; exit 1; }
+              python3 test/e2e/validate-report.py root "$root_json"
+              echo "::endgroup::"
+
+              echo "::group::pev assess (non-root, no egress)"
+              # Run again as a non-root user to exercise the requires_root SKIP
+              # path. Copy the binary to a world-readable location (the mounted
+              # /work directory owner and permissions vary by container OS) and
+              # use a writable out-dir under /tmp.
+              cp ./pev /tmp/pev-bin
+              chmod 0755 /tmp/pev-bin
+              mkdir -p /tmp/pev-nobody && chmod 0777 /tmp/pev-nobody
+              if command -v runuser >/dev/null; then
+                runuser -u nobody -- /tmp/pev-bin assess --non-interactive \
+                  --products workbench,connect,packagemanager \
+                  --out-dir /tmp/pev-nobody --skip-tags egress \
+                  && nr_rc=0 || nr_rc=$?
+              else
+                su -s /bin/sh nobody -c "/tmp/pev-bin assess --non-interactive --products workbench,connect,packagemanager --out-dir /tmp/pev-nobody --skip-tags egress" \
+                  && nr_rc=0 || nr_rc=$?
+              fi
+              echo "non-root assess exited $nr_rc"
+              ls /tmp/pev-nobody/
+              nr_json=$(ls /tmp/pev-nobody/pev-report-*.json | head -1)
+              test -n "$nr_json" || { echo "no non-root JSON report"; exit 1; }
+              test -f "${nr_json%.json}.md" || { echo "no non-root Markdown report"; exit 1; }
+              python3 test/e2e/validate-report.py nonroot "$nr_json" "$root_json"
+              echo "::endgroup::"
+            '

@@ -1,0 +1,100 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          # Pin the linter major to avoid a future v3 release silently
+          # changing CI behavior. Refresh deliberately when bumping rules.
+          version: v2.12.2
+          args: --timeout=5m
+      - run: go vet ./...
+      - run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "Files need gofmt:"; echo "$out"; exit 1
+          fi
+
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./... -race -shuffle=on -coverprofile=cover.out -covermode=atomic
+      - uses: codecov/codecov-action@v7
+        with:
+          files: cover.out
+          fail_ci_if_error: false
+
+  # gosec runs inside golangci-lint with the project's exclude list, so we do
+  # not run it standalone here — the standalone action reads no config and
+  # would re-flag every G204/G304/G306 we already justified for the catalog
+  # primitives. govulncheck stays as an advisory job: the Go stdlib churns
+  # CVEs and we don't want a brand-new one to block the release of an
+  # otherwise-good pev. Findings still surface in the Actions UI.
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: govulncheck (advisory)
+        continue-on-error: true
+        run: |
+          # Pin to v1.1.4 — the latest govulncheck whose go.mod permits
+          # build under go 1.22+. v1.2.0+ require go 1.25.
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          govulncheck ./...
+
+  build-matrix:
+    needs: [lint, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [linux]
+        arch: [amd64, arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          go build -trimpath -ldflags "-s -w \
+            -X main.version=ci-${{ github.sha }} \
+            -X main.commit=${{ github.sha }} \
+            -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o pev_${{ matrix.os }}_${{ matrix.arch }} ./
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pev-${{ matrix.os }}-${{ matrix.arch }}
+          path: pev_${{ matrix.os }}_${{ matrix.arch }}

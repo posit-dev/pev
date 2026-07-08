@@ -1,0 +1,30 @@
+name: Check request
+description: Propose a new built-in YAML check.
+title: "[check] "
+labels: [check, enhancement]
+body:
+  - type: input
+    id: id
+    attributes:
+      label: Proposed check id
+      description: Use the dotted convention area.topic.facet (e.g. workbench.idp.metadata).
+      placeholder: "<area>.<topic>.<facet>"
+    validations: { required: true }
+  - type: dropdown
+    id: primitive
+    attributes:
+      label: Primitive
+      options: [cmd, file, dir, port, dns, http, x509, pkg, sysctl, sizing, bind, postgres, systemd, selinux, apparmor]
+    validations: { required: true }
+  - type: textarea
+    id: why
+    attributes:
+      label: Why this matters
+      description: Rationale shown in the report. Be specific about the failure mode this prevents.
+    validations: { required: true }
+  - type: textarea
+    id: refs
+    attributes:
+      label: Posit docs URL(s)
+      description: Authoritative source(s) for the success criteria.
+    validations: { required: true }

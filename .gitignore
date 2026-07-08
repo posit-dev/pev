@@ -1,0 +1,28 @@
+# Build artifacts
+/pev
+/pev_*
+/dist/
+
+# Coverage
+cover.out
+coverage.html
+
+# pev report artifacts (in case devs run pev from the repo root)
+pev-report-*.md
+pev-report-*.json
+pev-cmdlog-*.sh
+pev-log-*.log
+/pev-reports/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+
+# Python (test/e2e/validate-report.py byproducts)
+__pycache__/
+*.pyc

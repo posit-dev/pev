@@ -1,0 +1,143 @@
+schema_version: 3
+# Runtime kernel/userspace settings that don't fit into mount, package, or
+# security baselines. Each item here is sourced from a recurring
+# Posit-support ticket pattern:
+#   - low ulimit -n         → "Too many open files" / rserver-launcher EMFILE
+#   - cgroups v1 on Workbench → rserver-monitor failures reading
+#                              memory.limit_in_bytes
+#   - missing UTF-8 locale  → rsession warnings, RMarkdown character
+#                              corruption, container "cannot change locale"
+checks:
+  - id: os.ulimit.nofile
+    title: Open-file limit (ulimit -Hn) is sufficient for Posit products
+    short_description: Checking open-file hard limit is at least 65536
+    category: Operating System
+    tags: [os, ulimit, limits]
+    applies_to:
+      products: [workbench, connect, packagemanager]
+    why: |
+      Posit products spawn many concurrent sockets and per-user session
+      processes. The default RHEL/Ubuntu hard limit of 4096 file
+      descriptors is consistently exhausted in busy Workbench and Connect
+      installs ("ERROR system error 24 (Too many open files)"). Posit's
+      product systemd units ship with LimitNOFILE=infinity, but the
+      kernel-level fs.nr_open and the /etc/security/limits.d/ caps still
+      apply to user-spawned R/Python sessions. Require a hard limit of
+      at least 65536 — well below kernel max, well above default.
+    remediation: |
+      Add a drop-in to /etc/security/limits.d/ (e.g. /etc/security/limits.d/90-posit.conf):
+        *    soft    nofile  65536
+        *    hard    nofile  65536
+      Then for the product service, ensure its systemd unit has
+      `LimitNOFILE=infinity` (the shipped units already do; verify with
+      `systemctl show rstudio-server -p LimitNOFILE`). Re-login to apply
+      to interactive sessions.
+    references:
+      - https://support.posit.co/hc/en-us/articles/360044800273
+    primitive: cmd
+    with:
+      cmd: |
+        hard=$(ulimit -Hn 2>/dev/null || echo 0)
+        if [ "$hard" = "unlimited" ] || [ "$hard" -ge 65536 ] 2>/dev/null; then
+          echo "ulimit -Hn = $hard (>= 65536)"
+          exit 0
+        fi
+        echo "ulimit -Hn = $hard (below the recommended 65536)"
+        exit 1
+      expect_exit: 0
+      timeout_seconds: 5
+
+  - id: os.cgroups.v2-available
+    title: cgroups v2 (unified hierarchy) is available
+    short_description: Checking cgroups v2 unified hierarchy is active
+    category: Operating System
+    tags: [os, cgroups, workbench]
+    applies_to:
+      products: [workbench]
+    why: |
+      Posit Workbench's monitor and per-session resource limits are built
+      against cgroups v2. On hosts still running cgroups v1 (or hybrid
+      mode) rserver-monitor fails to read memory.limit_in_bytes, session
+      memory caps are silently ignored, and "cgroup error" appears in
+      syslog. The unified hierarchy is detected by the presence of
+      /sys/fs/cgroup/cgroup.controllers.
+    remediation: |
+      Boot the kernel with `systemd.unified_cgroup_hierarchy=1` (already
+      the default on RHEL 9+, Ubuntu 22.04+). For older kernels or hosts
+      explicitly opted into hybrid/legacy mode, edit
+      /etc/default/grub:
+        GRUB_CMDLINE_LINUX="... systemd.unified_cgroup_hierarchy=1"
+      then `grub2-mkconfig -o /boot/grub2/grub.cfg` (RHEL) or
+      `update-grub` (Ubuntu) and reboot.
+    references:
+      - https://docs.posit.co/ide/server-pro/admin/launcher/local.html#cgroups
+    primitive: cmd
+    with:
+      cmd: |
+        if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+          echo "cgroups v2 unified hierarchy active"
+          echo "controllers: $(cat /sys/fs/cgroup/cgroup.controllers)"
+          exit 0
+        fi
+        if [ -d /sys/fs/cgroup/memory ] && [ ! -f /sys/fs/cgroup/cgroup.controllers ]; then
+          echo "cgroups v1 (legacy) hierarchy detected — Workbench requires v2"
+          exit 1
+        fi
+        echo "no cgroup hierarchy detected at /sys/fs/cgroup"
+        exit 1
+      expect_exit: 0
+      timeout_seconds: 5
+
+  - id: os.locale.utf8
+    title: A UTF-8 locale is configured
+    short_description: Checking system default locale is UTF-8
+    category: Operating System
+    tags: [os, locale]
+    applies_to:
+      products: [workbench, connect, packagemanager]
+    why: |
+      Posit products and R/Python sessions assume a UTF-8 locale at
+      runtime. When LANG/LC_ALL is C, POSIX, or unset, R issues
+      "Setting LC_CTYPE failed", RMarkdown breaks on non-ASCII characters,
+      and Connect/PPM containers log "bash: warning: setlocale: LC_ALL:
+      cannot change locale (en_US.UTF-8)". This check confirms that at
+      least one UTF-8 locale is generated AND that the system default
+      (in /etc/locale.conf or /etc/default/locale) selects one.
+    remediation: |
+      Ubuntu:
+        sudo apt-get install -y locales
+        sudo locale-gen en_US.UTF-8
+        sudo update-locale LANG=en_US.UTF-8
+      RHEL:
+        sudo dnf install -y glibc-langpack-en
+        sudo localectl set-locale LANG=en_US.UTF-8
+      Re-login to apply.
+    references:
+      - https://docs.posit.co/ide/server-pro/admin/getting_started/installation/installation.html
+    primitive: cmd
+    with:
+      cmd: |
+        avail=$(locale -a 2>/dev/null | grep -iE '\.utf-?8$' | head -5)
+        if [ -z "$avail" ]; then
+          echo "no UTF-8 locale generated"
+          exit 1
+        fi
+        echo "available UTF-8 locales (first 5):"
+        echo "$avail"
+        # Default locale must select a UTF-8 entry — check the most likely sources.
+        default=""
+        for f in /etc/locale.conf /etc/default/locale; do
+          if [ -r "$f" ]; then
+            v=$(grep -E '^(LANG|LC_ALL)=' "$f" | tail -1 | cut -d= -f2- | tr -d '"')
+            if [ -n "$v" ]; then default="$f: $v"; break; fi
+          fi
+        done
+        if [ -z "$default" ]; then
+          # Fall back to the running shell's LANG/LC_ALL.
+          v="${LC_ALL:-${LANG:-}}"
+          [ -n "$v" ] && default="environment: $v"
+        fi
+        echo "system default = $default"
+        echo "$default" | grep -qiE '\.utf-?8' || { echo "default locale is not UTF-8"; exit 1; }
+      expect_exit: 0
+      timeout_seconds: 5

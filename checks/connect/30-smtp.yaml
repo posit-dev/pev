@@ -1,0 +1,17 @@
+schema_version: 3
+checks:
+  - id: connect.smtp.reachable
+    title: SMTP server reachable from Connect host
+    short_description: Probing Connect outbound SMTP host:port reachability
+    tags: [smtp, connect]
+    applies_to:
+      products: [connect]
+    why: |
+      Connect sends email for scheduled reports, password resets, and
+      deployment failure alerts. Without working SMTP these break and admins
+      lose telemetry.
+    primitive: port
+    with:
+      host: "{{ .Inputs.connect_smtp_host }}"
+      port: 587
+      timeout_seconds: 5

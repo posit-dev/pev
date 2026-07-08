@@ -1,0 +1,21 @@
+schema_version: 3
+checks:
+  - id: ppm.ssl.cert-key-match
+    title: Package Manager SSL certificate and key are paired
+    short_description: Verifying Package Manager SSL cert/key pair and hostname match
+    category: SSL/TLS
+    tags: [ssl, packagemanager]
+    applies_to:
+      products: [packagemanager]
+    why: |
+      R and Python clients (renv, pip, uv) reject packages from untrusted
+      sources. A bad cert/key pairing breaks every package download org-wide.
+    references:
+      - https://docs.posit.co/rspm/admin/networking.html#configuring-ssl-certificates
+    primitive: x509
+    with:
+      cert_path: "{{ .Inputs.ppm_cert }}"
+      key_path: "{{ .Inputs.ppm_key }}"
+      verify_chain: true
+      match_hostname: "{{ .Inputs.ppm_hostname }}"
+      not_after_min_days: 30

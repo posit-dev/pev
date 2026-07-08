@@ -1,0 +1,119 @@
+name: posit-images
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Run pev inside the official Posit Workbench and Connect images. Unlike
+# e2e.yml (which runs against clean Ubuntu/Alma bases and expects most of
+# the install-prereq checks to FAIL), these images already have the
+# product installed on a properly-prepared base — the assertion is that
+# pev finds no *unexpected* fail/unknown checks with the no-input baseline
+# scenario (--skip-tags egress,ssl).
+#
+# A small allowlist of known-residual fail/unknown ids per product is kept
+# below: things the canned image cannot satisfy (build-deps not installed,
+# SMTP host not supplied, setfacl absent in the image, etc). Anything
+# outside the allowlist is a regression and fails CI.
+#
+# Schema 2 (pev v0.0.2+) dropped severity tiers, so the gate is purely
+# status-based: every fail/unknown counts equally and must either pass or
+# be on the allowlist.
+#
+# Images are pinned by repository digest (sha256), not tag, so an upstream
+# rebuild can't silently change pev's test results. To refresh, run
+# scripts/refresh-posit-images.sh and update the digests below.
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - product: workbench
+            image: docker.io/posit/workbench@sha256:3d76d4b38651287d158c59fe82fc7e7d5bb8de1a1178a922bd50a90892d0d87a
+            # Expected fails on the stock workbench image. Update with care.
+            #   pkg-mgr.apt.repolist-fresh        — apt lists are baked at image-build time and age past 30d
+            #   sec.apparmor.not-enabled          — runner host has AppArmor enabled; check observes the host kernel
+            #   sizing.workbench.minimum          — GH runner is below the 100 GB / 4 GB customer minimum
+            #   storage.acl.posix.home-and-local  — image ships without acl/setfacl
+            allowed_unexpected: |
+              pkg-mgr.apt.repolist-fresh
+              sec.apparmor.not-enabled
+              sizing.workbench.minimum
+              storage.acl.posix.home-and-local
+          - product: connect
+            image: docker.io/posit/connect@sha256:8de3d13ba5fdd46576ecdcbdff43420305407192d2c0de462545eba1ba082de9
+            # Expected fails on the stock connect image. Update with care.
+            #   pkg-mgr.apt.repolist-fresh — apt lists are baked at image-build time and age past 30d
+            #   pkg.libcurl-dev            — build-deps for analytics packages not pre-installed
+            #   pkg.libxml2-dev            — same
+            #   sec.apparmor.not-enabled   — runner host has AppArmor enabled; check observes the host kernel
+            #   sizing.connect.minimum     — GH runner is below the 100 GB / 4 GB customer minimum
+            #   storage.acl.posix.home-and-local — image ships without acl/setfacl
+            # (connect.smtp.reachable now SKIPs when no smtp host is supplied, so it
+            #  no longer appears in the fail/unknown set and needs no allowlist entry.)
+            allowed_unexpected: |
+              pkg-mgr.apt.repolist-fresh
+              pkg.libcurl-dev
+              pkg.libxml2-dev
+              sec.apparmor.not-enabled
+              sizing.connect.minimum
+              storage.acl.posix.home-and-local
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build pev binary
+        env: { CGO_ENABLED: 0 }
+        run: go build -trimpath -ldflags "-s -w" -o pev ./
+
+      - name: Run pev inside ${{ matrix.product }} image
+        run: |
+          set -euo pipefail
+          mkdir -p out && chmod 0777 out
+          docker run --rm \
+            --entrypoint="" \
+            -v "$PWD/pev":/usr/local/bin/pev:ro \
+            -v "$PWD/out":/out \
+            "${{ matrix.image }}" \
+            pev assess --non-interactive --products "${{ matrix.product }}" \
+              --out-dir /out --skip-tags egress,ssl || true
+          report=$(ls out/pev-report-*.json | head -1)
+          test -n "$report"
+          echo "::group::summary"
+          jq '.summary' "$report"
+          echo "::endgroup::"
+          echo "::group::per-check status"
+          jq -r '.results[] | "\(.status)\t\(.id)\t\(.reason // "")"' "$report"
+          echo "::endgroup::"
+
+          # Compute (failing|unknown) − allowlist. Anything in the diff is
+          # a regression: a check that started failing on this image since
+          # the allowlist was last updated.
+          allowed=$(printf '%s' "${{ matrix.allowed_unexpected }}" | awk 'NF')
+          actual=$(jq -r '.results[] | select(.status=="fail" or .status=="unknown") | .id' "$report" | sort -u)
+          unexpected=$(comm -23 <(printf '%s\n' "$actual") <(printf '%s\n' "$allowed" | sort -u))
+          if [ -n "$unexpected" ]; then
+            echo "::error::pev reported unexpected fail/unknown checks in ${{ matrix.product }} image:"
+            while IFS= read -r id; do
+              [ -z "$id" ] && continue
+              jq -r --arg id "$id" '.results[] | select(.id==$id) | "  - \(.status)\t\(.id): \(.reason // "")"' "$report"
+            done <<<"$unexpected"
+            exit 1
+          fi
+          echo "OK: ${{ matrix.product }} — all fail/unknown checks were on the allowlist"
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pev-report-${{ matrix.product }}
+          path: out/

@@ -1,0 +1,147 @@
+schema_version: 3
+# POSIX (NFSv3-style) and NFSv4 ACL support per mount.
+#
+# Workbench's project sharing feature uses Access Control Lists to grant
+# collaborators access to shared project directories without changing
+# group ownership. The ACL flavor depends on the filesystem:
+#
+#   - Local filesystems and NFSv3        → POSIX ACLs (setfacl/getfacl)
+#   - NFSv4 mounts                       → NFSv4 ACLs (nfs4_setfacl/nfs4_getfacl)
+#
+# We probe each /home and NFS mount with the appropriate tool. A failure
+# names the offending mount in the output so the SE knows exactly which
+# export needs the storage admin's attention.
+checks:
+  - id: storage.acl.posix.home-and-local
+    title: POSIX ACLs are supported on /home and local mounts
+    short_description: Probing POSIX ACL support on /home and local mounts
+    category: Storage
+    tags: [storage, acl, nfs, posix]
+    applies_to:
+      products: [workbench]
+    why: |
+      Posit Workbench Project Sharing requires POSIX ACL support on
+      every local-filesystem and NFSv3 mount that hosts project
+      directories. Without ACLs, `setfacl` fails with "Operation not
+      supported" and the Project Sharing UI silently refuses to grant
+      access. We test each mountpoint by setting and removing a
+      throwaway ACL on a temp file under it.
+    remediation: |
+      For ext4: ensure the mount is fstab'd with `acl` (default on
+      modern kernels but explicit `noacl` overrides it). For XFS: ACLs
+      are always enabled when the filesystem was made with default
+      options; verify with `xfs_info`. For NFSv3: the export must be
+      ext4/xfs/zfs with ACLs enabled on the *server* side, and the
+      client mount must include `acl` (or no `noacl`). Mounts that
+      cannot support ACLs cannot host shared projects.
+    references:
+      - https://docs.posit.co/ide/server-pro/admin/project-sharing.html
+    primitive: cmd
+    with:
+      # The first stdout line is a one-line summary suitable for the
+      # report's `reason:` field; subsequent lines list per-mount detail.
+      # On failure, the summary names the missing tool or the failing
+      # mountpoint(s) so the SE can act without scrolling into evidence.
+      cmd: |
+        if ! command -v setfacl >/dev/null 2>&1; then
+          echo "setfacl missing — install acl (apt) / acl (dnf) on the Workbench host"
+          echo "  reason: command -v setfacl returned non-zero"
+          exit 1
+        fi
+        # Collect mountpoints to test: /home, plus any non-NFSv4 NFS mount.
+        # We exclude pseudo filesystems (proc, sys, tmpfs) and read-only mounts.
+        mounts=$(findmnt -nrlo TARGET,FSTYPE,OPTIONS \
+          | awk '$2 !~ /^(proc|sysfs|tmpfs|devtmpfs|cgroup2?|overlay|squashfs|autofs|binfmt_misc|rpc_pipefs|fusectl|debugfs|configfs|mqueue|securityfs|tracefs|pstore|hugetlbfs|bpf|nsfs|none)$/ \
+                   && $2 != "nfs4" \
+                   && ($1 == "/home" || $2 == "nfs" || $1 ~ /^\/home(\/|$)/) \
+                   && $3 !~ /(^|,)ro(,|$)/ {print $1}' | sort -u)
+        if [ -z "$mounts" ]; then
+          echo "no testable POSIX-ACL mounts (/home is NFSv4 or absent) — nothing to verify"
+          exit 0
+        fi
+        unsupported=""
+        unwritable=""
+        ok=""
+        for m in $mounts; do
+          tmp="$m/.pev-aclprobe-$$"
+          if ! : > "$tmp" 2>/dev/null; then
+            unwritable="$unwritable $m"
+            continue
+          fi
+          if setfacl -m u:nobody:r "$tmp" 2>/dev/null && getfacl "$tmp" 2>/dev/null | grep -q '^user:nobody:'; then
+            setfacl -b "$tmp" 2>/dev/null
+            ok="$ok $m"
+          else
+            unsupported="$unsupported $m"
+          fi
+          rm -f "$tmp"
+        done
+        if [ -n "$unsupported" ] || [ -n "$unwritable" ]; then
+          # Print the per-bucket detail first; finish with the one-line
+          # summary so cmd's failReason() picks IT up as the report
+          # reason (rather than an unrelated "ok:" trailer).
+          [ -n "$unsupported" ] && echo "  unsupported (filesystem rejected setfacl):$unsupported"
+          [ -n "$unwritable" ]  && echo "  unwritable (cannot create probe file):$unwritable"
+          [ -n "$ok" ]          && echo "  ok:$ok"
+          summary="POSIX ACL probe failed:"
+          [ -n "$unsupported" ] && summary="$summary unsupported{$unsupported }"
+          [ -n "$unwritable" ]  && summary="$summary unwritable{$unwritable }"
+          echo "$summary"
+          exit 1
+        fi
+        echo "POSIX ACL supported on:$ok"
+      expect_exit: 0
+      timeout_seconds: 15
+
+  - id: storage.acl.nfsv4
+    title: NFSv4 ACLs are supported on every NFSv4 mount
+    short_description: Probing NFSv4 ACL support on every NFSv4 mount
+    category: Storage
+    tags: [storage, acl, nfs, nfsv4]
+    applies_to:
+      products: [workbench]
+    why: |
+      NFSv4 mounts use a separate ACL model (Windows-style) accessed
+      via `nfs4_setfacl` / `nfs4_getfacl` from the nfs4-acl-tools
+      package. Workbench Project Sharing on NFSv4 requires the export
+      to advertise NFSv4 ACL support; an export configured with
+      `no_acl` or backed by a filesystem that doesn't support NFSv4
+      ACLs (some older Netapp/Isilon configs) silently rejects every
+      sharing grant. We probe each NFSv4 mount by reading the ACL on
+      its mountpoint.
+    remediation: |
+      Install nfs4-acl-tools (`apt-get install nfs4-acl-tools` /
+      `dnf install nfs4-acl-tools`). On the NFS server, enable ACLs
+      in the export (Linux kernel server: ext4/xfs with ACL support;
+      Netapp: `vserver nfs modify -v4.0-acl enabled`; Isilon: enable
+      ACL policy on the export). Re-mount the client with `vers=4.x`
+      and verify with `nfs4_getfacl <mountpoint>`.
+    references:
+      - https://linux.die.net/man/5/nfs4_acl
+      - https://docs.posit.co/ide/server-pro/admin/project-sharing.html
+    primitive: cmd
+    with:
+      cmd: |
+        nfs4_mounts=$(findmnt -nrlo TARGET,FSTYPE | awk '$2 == "nfs4" {print $1}')
+        if [ -z "$nfs4_mounts" ]; then
+          echo "no NFSv4 mounts present; nothing to verify"
+          exit 0
+        fi
+        if ! command -v nfs4_getfacl >/dev/null 2>&1; then
+          echo "nfs4-acl-tools not installed but NFSv4 mounts present:"
+          echo "$nfs4_mounts"
+          exit 1
+        fi
+        failed=
+        for m in $nfs4_mounts; do
+          if ! nfs4_getfacl "$m" >/dev/null 2>&1; then
+            failed="$failed $m"
+          fi
+        done
+        if [ -n "$failed" ]; then
+          echo "NFSv4 ACL not supported on:$failed"
+          exit 1
+        fi
+        echo "NFSv4 ACL supported on: $nfs4_mounts" | tr '\n' ' '; echo
+      expect_exit: 0
+      timeout_seconds: 15

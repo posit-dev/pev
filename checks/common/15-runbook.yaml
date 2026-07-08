@@ -1,0 +1,320 @@
+schema_version: 3
+# Runbook prereqs sourced from the Posit Team install guide:
+#   https://gist.github.com/leesahanders/12a44e570e16747a7e4a95c4c6cbf81b
+# These cover umask hardening, RHEL subscription, NFS dependencies, DNS
+# self-resolution, NFS-mounted /home, fstab persistence, optional PAM
+# resolvability, and Posit Pro Drivers presence — all things SEs ask
+# about manually on every install call.
+checks:
+  - id: sec.umask.permissive
+    title: Login umask permits readable site-packages (umask <= 0027)
+    short_description: Checking login umask permits readable site-packages
+    category: Security
+    tags: [umask, security]
+    why: |
+      An overly restrictive umask (e.g. 0077) silently corrupts Python
+      installs: site-packages files end up mode 0600, unreadable by
+      regular users. Jupyter sessions then fail to launch with a
+      misleading import error. Running with umask 0022 or 0027 keeps
+      directory traversal open for non-owners.
+    remediation: |
+      Set `umask 0022` (or 0027) in /etc/login.defs (UMASK= line) and any
+      systemd unit overrides. Confirm with `umask` in a fresh login
+      session.
+    references:
+      - https://gist.github.com/leesahanders/12a44e570e16747a7e4a95c4c6cbf81b
+    primitive: cmd
+    with:
+      # umask emits an octal mask (e.g. 0022). printf %d on a string
+      # starting with '0' parses it as octal. Compare numerically against
+      # decimal 23 (= octal 027), the strictest mask that still keeps
+      # site-packages readable to non-owners. dash and bash both support
+      # this; `[[ ]]` arithmetic with `8#nn` does NOT work in dash.
+      cmd: |
+        u=$(umask)
+        val=$(printf %d "0$u" 2>/dev/null || echo 999)
+        if [ "$val" -le 23 ]; then
+          echo "login umask is $u (permissive enough for site-packages)"
+          exit 0
+        fi
+        echo "login umask is $u — too restrictive (must be <= 0027 to keep site-packages readable)"
+        exit 1
+      expect_exit: 0
+      timeout_seconds: 5
+
+  - id: os.subscription-manager.attached
+    title: RHEL subscription-manager reports an attached, current entitlement
+    short_description: Checking RHEL subscription-manager status
+    category: Operating System
+    tags: [os, rhel, subscription]
+    applies_to:
+      os: [rhel-8, rhel-9, rhel-10]
+    why: |
+      Unsubscribed RHEL hosts can't `dnf install` from upstream, which
+      means every Posit installer subcommand fails before it starts.
+      UBI variants, the binary-compatible rebuilds (Alma, Rocky, Oracle),
+      and CentOS don't use Red Hat subscriptions, so this check SKIPs on
+      those distros and only enforces on stock RHEL. Cloud
+      marketplace/PAYG RHEL (AWS/Azure/GCP) gets packages via Red Hat
+      Update Infrastructure (RHUI) and is never registered with
+      subscription-manager, so a RHUI host PASSes without it.
+    remediation: |
+      Run `subscription-manager register --username=<user> --password=<pw>`
+      (or attach via Activation Key) and `subscription-manager attach
+      --auto`. Confirm with `subscription-manager status`.
+    references:
+      - https://docs.posit.co/resources/install-r.html#install-required-dependencies
+    primitive: cmd
+    with:
+      # The engine normalizes Alma/Rocky/Oracle/CentOS to rhel-<major>, so
+      # applies_to.os alone can't distinguish them from stock RHEL. We re-read
+      # /etc/os-release here and skip_exit=2 on everything that isn't
+      # rhel/redhat — subscription-manager is a Red-Hat-specific concept.
+      #
+      # Cloud PAYG RHEL is entitled through RHUI, not subscription-manager:
+      # on those hosts `subscription-manager status` reports "Unknown" and
+      # exits 1 even though dnf installs fine (we install Posit deps from the
+      # RHUI repos every day). Detect RHUI first — via the rh-*-rhui-client
+      # package or the /etc/yum.repos.d/redhat-rhui*.repo files AWS/Azure/GCP
+      # drop in — and PASS, before falling through to subscription-manager.
+      cmd: |
+        . /etc/os-release 2>/dev/null
+        case "${ID:-}" in
+          rhel|redhat) ;;
+          *) echo "ID=${ID:-unknown}; subscription-manager applies only to stock RHEL"; exit 2 ;;
+        esac
+        if rpm -qa 'rh-*-rhui-client*' 2>/dev/null | grep -q . \
+           || ls /etc/yum.repos.d/redhat-rhui*.repo >/dev/null 2>&1; then
+          echo "RHUI-entitled cloud RHEL (PAYG) — packages served via Red Hat Update Infrastructure, no subscription-manager registration required"
+          exit 0
+        fi
+        if ! command -v subscription-manager >/dev/null 2>&1; then
+          echo "subscription-manager not installed on a host that identifies as RHEL"
+          exit 1
+        fi
+        if subscription-manager status 2>&1 | grep -q 'Overall Status: Current'; then
+          echo "subscription-manager reports Overall Status: Current"
+          exit 0
+        fi
+        echo "RHEL host is not RHUI-entitled and subscription-manager is not Current — register/attach before installing"
+        exit 1
+      expect_exit: 0
+      skip_exit: 2
+      timeout_seconds: 10
+
+  - id: pkg.nfs-utils.installed
+    title: NFS client package is installed when /home is on NFS
+    short_description: Checking NFS client package is installed
+    category: Packages
+    tags: [packages, nfs]
+    why: |
+      Mounting NFS without nfs-common (Ubuntu) or nfs-utils (RHEL) yields
+      cryptic "wrong fs type" or "no such device" errors at mount time.
+      pev only fires this check when /home is actually an NFS mount.
+    remediation: |
+      Ubuntu: `apt-get install -y nfs-common`.
+      RHEL/Alma/Rocky: `dnf install -y nfs-utils`.
+      Re-mount the share once the package is present.
+    primitive: cmd
+    with:
+      cmd: |
+        fs=$(findmnt -T /home -no FSTYPE 2>/dev/null)
+        case "$fs" in
+          nfs|nfs4)
+            if command -v dpkg >/dev/null; then
+              dpkg -l nfs-common 2>/dev/null | grep -q '^ii' && echo "nfs-common installed" && exit 0
+            fi
+            if command -v rpm >/dev/null; then
+              rpm -q nfs-utils >/dev/null 2>&1 && echo "nfs-utils installed" && exit 0
+            fi
+            echo "/home is $fs but neither nfs-common nor nfs-utils is installed"
+            exit 1
+            ;;
+          *)
+            echo "/home is $fs (not NFS); nfs client package not required"
+            ;;
+        esac
+      expect_exit: 0
+      timeout_seconds: 10
+
+  - id: net.dns.fqdn-resolves-to-self
+    title: Host's FQDN (or supplied Workbench URL) resolves to a local IP
+    short_description: Resolving host FQDN against local interfaces
+    category: Networking
+    tags: [network, dns]
+    why: |
+      Workbench, Connect, and Package Manager all generate user-visible
+      links using the host's FQDN. If the FQDN doesn't resolve, or
+      resolves to an IP that isn't bound on this host, sessions and
+      content URLs fail in ways that look like a load-balancer bug. When
+      the SE has supplied an explicit Workbench public hostname during
+      the prompt, this check uses that; otherwise it falls back to the
+      host's own FQDN.
+    remediation: |
+      For single-host installs, ensure /etc/hosts has an entry mapping
+      the FQDN to one of this host's interface IPs. For multi-host or
+      load-balanced installs, ensure public DNS resolves the URL to the
+      ingress in front of this host (the check only verifies *some*
+      resolution; it does not assert which IP).
+    primitive: dns
+    with:
+      # Take whichever the SE provided. workbench_hostname is set by the
+      # assess command's per-product prompt; otherwise the discovered
+      # FQDN (or hostname) is used. Empty input ⇒ template engine SKIPs
+      # with "missing input" — exactly the right behavior.
+      name: "{{ if .Inputs.workbench_hostname }}{{ .Inputs.workbench_hostname }}{{ else }}{{ if .Facts.FQDN }}{{ .Facts.FQDN }}{{ else }}{{ .Facts.Hostname }}{{ end }}{{ end }}"
+      must_resolve: true
+      match_local_ip: true
+      timeout_seconds: 5
+
+  - id: storage.home.share.mounted
+    title: Customer-supplied home NFS share is mounted writable
+    short_description: Checking declared home share is mounted writable
+    category: Storage
+    tags: [storage, nfs, home]
+    why: |
+      When the SE declares an NFS path is supposed to back /home (via
+      the home_share_path input), pev verifies it's actually mounted
+      and writable. Manual fstab edits without `mount -a` are the
+      single most common cause of "fstab works in test but not after
+      reboot" tickets.
+    remediation: |
+      Run `mount -a` and re-run pev. If that doesn't help, check
+      /var/log/messages or `journalctl -b -u remote-fs.target` for the
+      NFS error.
+    references:
+      - https://support.posit.co/hc/en-us/articles/360060548093-Deploying-NFS-for-High-Availability-Deployments
+    primitive: cmd
+    with:
+      # Convention used across the catalog's cmd: scripts — the LAST line
+      # of stdout/stderr on a non-zero exit becomes the SE-facing reason
+      # (see internal/primitives/cmd.go failReason). Echo a clear
+      # diagnostic just before each exit 1 so the report doesn't fall
+      # back to "command failed (exit 1)".
+      cmd: |
+        path={{ .Inputs.home_share_path }}
+        if [ -z "$path" ]; then
+          echo "no NFS home share declared (home_share_path input is empty)"
+          exit 2
+        fi
+        if ! mnt=$(findmnt -T "$path" -no SOURCE,FSTYPE,OPTIONS 2>/dev/null); then
+          echo "$path is not mounted (findmnt found no entry)"
+          exit 1
+        fi
+        echo "mount: $mnt"
+        # Writability test: must succeed for root or for the unprivileged
+        # user. We touch a file and clean up.
+        f="$path/.pev-mount-test-$$"
+        if ! : > "$f" 2>/dev/null; then
+          echo "cannot write to $path (permissions or read-only mount)"
+          exit 1
+        fi
+        rm -f "$f"
+        echo "$path is mounted writable"
+      expect_exit: 0
+      skip_exit: 2
+      timeout_seconds: 10
+
+  - id: storage.home.fstab-persistent
+    title: Customer-supplied home share survives reboot (in /etc/fstab)
+    short_description: Checking declared home share has an /etc/fstab entry
+    category: Storage
+    tags: [storage, fstab]
+    why: |
+      A share mounted manually with `mount` disappears on reboot. Posit
+      products' lock files and per-user state get destroyed silently.
+      Every NFS-backed home directory must have an /etc/fstab entry.
+    remediation: |
+      Add an /etc/fstab line for the share, including the `_netdev`
+      option so the mount waits for the network. Test with
+      `umount $path && mount -a` before rebooting.
+    primitive: cmd
+    with:
+      cmd: |
+        path={{ .Inputs.home_share_path }}
+        if [ -z "$path" ]; then
+          echo "no NFS home share declared (home_share_path input is empty)"
+          exit 2
+        fi
+        # Match the exact mountpoint as the second whitespace-separated
+        # field. Avoids false positives where the share path is
+        # mentioned in a comment or another row's source field.
+        if awk -v p="$path" '$1 !~ /^#/ && $2 == p {found=1} END {exit !found}' /etc/fstab; then
+          echo "$path has a matching /etc/fstab entry"
+          exit 0
+        fi
+        echo "no /etc/fstab entry mounts $path (the current mount will not survive reboot)"
+        exit 1
+      expect_exit: 0
+      skip_exit: 2
+      timeout_seconds: 5
+
+  - id: auth.pam.users-resolvable
+    title: Customer-supplied PAM/SSO test user resolves through nsswitch
+    short_description: Resolving customer-supplied PAM test user via nsswitch
+    category: Identity
+    tags: [auth, pam]
+    why: |
+      Workbench authenticates via PAM, which delegates to nsswitch.
+      If the customer's AD/LDAP/SSSD integration is mis-wired, `getent
+      passwd <user>` fails — and so does the first session. We test
+      with a customer-named user (no real auth handshake required).
+    remediation: |
+      Inspect /etc/nsswitch.conf and the relevant SSSD/winbind/sssctl
+      logs (`sssctl user-checks <user>`). Confirm that the IdP/AD
+      service account used by SSSD has read permission on the user
+      directory and that DNS to the AD controller works.
+    primitive: cmd
+    with:
+      cmd: |
+        u={{ .Inputs.pam_test_user }}
+        if [ -z "$u" ]; then
+          echo "no PAM/SSO test user declared (pam_test_user input is empty)"
+          exit 2
+        fi
+        if entry=$(getent passwd "$u"); then
+          echo "$entry"
+          echo "user '$u' resolves through nsswitch"
+          exit 0
+        fi
+        echo "user '$u' did not resolve via getent passwd (PAM/nsswitch is not finding it)"
+        exit 1
+      expect_exit: 0
+      skip_exit: 2
+      timeout_seconds: 10
+
+  - id: pkg.pro-drivers.installed
+    title: Posit Pro Drivers are installed (when declared)
+    short_description: Checking Posit Pro Drivers package is installed
+    category: Packages
+    tags: [packages, drivers]
+    why: |
+      Posit Pro Drivers (rstudio-drivers) bundle ODBC drivers for
+      Snowflake, SQL Server, Postgres, Oracle, etc. When the customer
+      declares they will use Pro Drivers, pev verifies the package is
+      actually installed before the install session, since drivers
+      install separately from the Posit products themselves.
+    remediation: |
+      Follow https://docs.posit.co/pro-drivers/server/ to install the
+      rstudio-drivers package, then re-run pev.
+    references:
+      - https://docs.posit.co/pro-drivers/server/
+    primitive: cmd
+    with:
+      cmd: |
+        want={{ .Inputs.use_pro_drivers }}
+        if [ "$want" != "yes" ]; then
+          echo "Pro Drivers not declared (use_pro_drivers input is not yes)"
+          exit 2
+        fi
+        if command -v dpkg >/dev/null; then
+          dpkg -l rstudio-drivers 2>/dev/null | grep -q '^ii' && exit 0
+        fi
+        if command -v rpm >/dev/null; then
+          rpm -q rstudio-drivers >/dev/null 2>&1 && exit 0
+        fi
+        echo "rstudio-drivers package not installed"
+        exit 1
+      expect_exit: 0
+      skip_exit: 2
+      timeout_seconds: 10

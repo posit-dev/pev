@@ -1,0 +1,63 @@
+version: "2"
+run:
+  tests: true
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - errorlint
+    - gocyclo
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - noctx
+    - revive
+    - staticcheck
+    - unconvert
+    - unused
+  settings:
+    gocyclo:
+      # 22 covers the linear flag-handling in cmd/assess.go, the deterministic
+      # section rendering in internal/report/markdown.go, and the FS+disk pack
+      # loader in internal/checks/loader.go. Splitting any of those would hurt
+      # readability without removing real branching.
+      min-complexity: 22
+    gosec:
+      excludes:
+        # G204: Subprocess launched with variable — pev's whole job is shelling
+        # out for primitives; arguments are catalog-controlled, not
+        # user-controlled.
+        - G204
+        # G304: file inclusion via variable — same rationale; check files are
+        # user-driven by design.
+        - G304
+    revive:
+      severity: warning
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+          - gocyclo
+          - gosec
+        path: _test\.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofumpt
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

@@ -1,0 +1,35 @@
+schema_version: 3
+# Database prereqs. Currently PostgreSQL only; Connect and Package
+# Manager use Postgres as their external DB in HA configurations. Both
+# checks fire only when the SE confirmed Postgres usage during the
+# assess prompt — otherwise the templating returns empty and the engine
+# SKIPs cleanly.
+checks:
+  - id: db.postgres.reachable
+    title: Customer-declared PostgreSQL host is reachable
+    short_description: Probing declared PostgreSQL host:port reachability
+    category: Storage
+    tags: [database, postgres]
+    why: |
+      Connect and Package Manager require a reachable Postgres for
+      their HA / multi-node deployments. pev verifies the network
+      path with a TCP+TLS handshake against host:port. We do NOT send
+      SQL — that would need credentials in the catalog and a SQL
+      driver in the binary. The product installer surfaces the
+      auth/database error directly.
+    remediation: |
+      `nc -vz <host> <port>` reproduces the failure. From there:
+        - DNS issue?      `nslookup <host>` from the install host.
+        - Routing/SG?     trace from the install host through your
+                          security group / firewall to the DB.
+        - DB not running? log into the DB admin console.
+        - TLS forced?     ensure pev's outbound TLS handshake matches
+                          the cert presented by the DB.
+    references:
+      - https://docs.posit.co/connect/admin/integration/database/
+      - https://docs.posit.co/rspm/admin/database.html
+    primitive: postgres
+    with:
+      host: "{{ .Inputs.postgres_host }}"
+      port: "{{ .Inputs.postgres_port }}"
+      timeout_seconds: 5

@@ -1,0 +1,211 @@
+schema_version: 3
+# Filesystem mount-option and ownership checks. /tmp and /home semantics
+# trip up Posit installs in two specific ways:
+#   1. `noexec` mounts break R package compilation, pip/uv venv shims, and
+#      rstudio-server's session bootstrap (which all drop a binary then
+#      exec it).
+#   2. NFS-mounted home directories with `root_squash` and/or `all_squash`
+#      either prevent root from creating per-user dirs at install time
+#      or rewrite uid/gid on user-written files, breaking renv and
+#      Workbench session ownership.
+#
+# Each failing check carries a remediation: line so the SE has the
+# product-specific fix in front of them when handing the report back.
+checks:
+  - id: os.tmp.exec
+    title: /tmp is mounted exec (not noexec)
+    short_description: Checking /tmp is not mounted noexec
+    category: Operating System
+    tags: [os, mount, tmp]
+    why: |
+      Hardening guides often mount /tmp with the `noexec` option. R package
+      compilation, pip/uv venv shims, and rstudio-server's session
+      bootstrap all drop a binary into /tmp and exec it; with noexec, every
+      one of those silently fails or produces a misleading "permission
+      denied" error.
+    remediation: |
+      Either remount /tmp without `noexec`, or point the products at a
+      writable+executable directory. Workbench: set `server-temp-dir` in
+      /etc/rstudio/rserver.conf and ensure rstudio-server-rsession-tmp is
+      under it. Connect: set `Server.TempDir` in rstudio-connect.gcfg.
+      Package Manager: set `Server.TempDir` in rstudio-pm.gcfg.
+    references:
+      - https://docs.posit.co/ide/server-pro/admin/getting_started/installation/installation.html
+    primitive: cmd
+    with:
+      cmd: |
+        opts=$(findmnt -T /tmp -no OPTIONS 2>/dev/null) || {
+          echo "/tmp is not a known mount point (findmnt found no entry)"
+          exit 1
+        }
+        if echo "$opts" | grep -q noexec; then
+          echo "/tmp is mounted with noexec (options: $opts)"
+          exit 1
+        fi
+        echo "/tmp is mounted exec (options: $opts)"
+      expect_exit: 0
+      timeout_seconds: 5
+
+  - id: os.home.exec
+    title: /home is mounted exec (not noexec)
+    short_description: Checking /home is not mounted noexec
+    category: Operating System
+    tags: [os, mount, home]
+    why: |
+      User-installed R packages compile native code into the user's site
+      library under $HOME; renv and uv venvs drop helper binaries there
+      too. Mounting /home noexec breaks every renv and uv-venv user-install
+      flow with confusing "permission denied" errors.
+    remediation: |
+      Remount /home without `noexec`. If the security baseline forbids
+      that, relocate Workbench user home directories to an exec-allowed
+      filesystem (set `default-rsession-cwd` and the user PAM home path
+      to a separate mount the security policy allows to be exec).
+    references:
+      - https://rstudio.github.io/renv/articles/renv.html
+    primitive: cmd
+    with:
+      cmd: |
+        opts=$(findmnt -T /home -no OPTIONS 2>/dev/null) || {
+          echo "/home is not a known mount point (findmnt found no entry)"
+          exit 1
+        }
+        if echo "$opts" | grep -q noexec; then
+          echo "/home is mounted with noexec (options: $opts)"
+          exit 1
+        fi
+        echo "/home is mounted exec (options: $opts)"
+      expect_exit: 0
+      timeout_seconds: 5
+
+  - id: os.home.root-writable
+    title: Root can create and own a directory under /home
+    short_description: Checking root can mkdir+chown under /home
+    category: Operating System
+    tags: [os, mount, home, nfs]
+    requires_root: true
+    why: |
+      Workbench provisions per-user home directories and Linux groups at
+      install time. NFS exports mounted with `root_squash` map root's
+      writes to nobody:nogroup, so `mkdir /home/<user>` and `chown` fail
+      mid-install. Read-only home filesystems and exotic ACLs also trip
+      this. We probe by mkdir'ing a temp directory and chowning it to
+      root:root, then cleaning up.
+    remediation: |
+      For NFS: ask the storage admin to export /home with `no_root_squash`
+      to the install host (and only that host). For local filesystems:
+      remount /home read-write and verify root has write+chown on the
+      directory.
+    references:
+      - https://docs.posit.co/ide/server-pro/admin/authenticating-users/index.html
+    primitive: cmd
+    with:
+      cmd: |
+        d=/home/.pev-roottest-$$
+        if ! mkdir "$d" 2>/dev/null; then
+          echo "root cannot mkdir under /home (read-only mount, squashed root, or restrictive ACL)"
+          exit 1
+        fi
+        if ! chown root:root "$d" 2>/dev/null; then
+          rmdir "$d" 2>/dev/null
+          echo "root cannot chown under /home (likely an NFS export with root_squash)"
+          exit 1
+        fi
+        rmdir "$d"
+        echo "root can mkdir+chown under /home"
+      expect_exit: 0
+      timeout_seconds: 10
+
+  - id: os.home.nfs.no-root-squash
+    title: NFS-mounted /home is exported with no_root_squash to this host
+    short_description: Checking NFS /home export honors root writes
+    category: Operating System
+    tags: [os, mount, home, nfs]
+    requires_root: true
+    why: |
+      When /home is NFS, `root_squash` (the default) maps root's writes to
+      the anonymous user. Workbench, Connect, and Package Manager each
+      perform root-owned setup under /home (per-user dir creation, lock
+      files, license install paths). The export must be mounted
+      no_root_squash to this host for those steps to succeed.
+    remediation: |
+      Ask the storage admin to export the /home volume with
+      `no_root_squash` to the install host (and only that host) in
+      /etc/exports. Re-mount /home or `exportfs -ar` after the change.
+    references:
+      - https://linux.die.net/man/5/exports
+    primitive: cmd
+    with:
+      # Intra-test gating: when /home is not NFS, exit 2 → cmd primitive
+      # treats that as SKIP (skip_exit below). When /home IS NFS, attempt
+      # a root-owned write under it — root_squash maps that write to
+      # nobody and the chown fails, surfacing the export misconfig
+      # before install touches /home.
+      cmd: |
+        fs=$(findmnt -T /home -no FSTYPE)
+        case "$fs" in
+          nfs|nfs4)
+            d=/home/.pev-rstest-$$
+            if ! mkdir "$d" 2>/dev/null; then
+              echo "root cannot mkdir on the NFS /home export (root writes are being squashed)"
+              exit 1
+            fi
+            if ! chown root:root "$d" 2>/dev/null; then
+              rmdir "$d" 2>/dev/null
+              echo "root cannot chown on the NFS /home export (export is mounted with root_squash)"
+              exit 1
+            fi
+            rmdir "$d"
+            echo "NFS /home export honors root writes (no_root_squash is effective)"
+            ;;
+          *)
+            echo "/home is $fs (not NFS); root_squash check not applicable"
+            exit 2
+            ;;
+        esac
+      expect_exit: 0
+      skip_exit: 2
+      timeout_seconds: 10
+
+  - id: os.home.user-uid-preserved
+    title: Files in $HOME are owned by the running user (no NFS uid squash)
+    short_description: Checking $HOME writes preserve the user's uid/gid
+    category: Operating System
+    tags: [os, mount, home, nfs]
+    why: |
+      An NFS export with `all_squash` or a misconfigured idmapd silently
+      rewrites uid/gid on user-written files to nobody:nogroup. The user
+      doesn't notice until renv tries to read its own library cache and
+      hits EACCES, or rstudio-server refuses to start a session because
+      the project directory isn't owned by the launching user. This check
+      writes a temp file in $HOME, then asserts its owner matches `id -u`
+      and `id -g`. Skipped under root because root's write would be the
+      one we just covered above.
+    remediation: |
+      For NFS: drop `all_squash` from the /etc/exports line for /home, or
+      pin idmapd's Domain= on both the server and client (NFSv4 ID
+      mapping). For local filesystems: investigate ACLs or chattr flags
+      on $HOME.
+    primitive: cmd
+    with:
+      cmd: |
+        if [ "$(id -u)" -eq 0 ]; then
+          echo "skipping under root (covered by os.home.root-writable)"
+          exit 0
+        fi
+        f=$HOME/.pev-uidtest-$$
+        if ! : > "$f" 2>/dev/null; then
+          echo "cannot write to \$HOME=$HOME (permissions or read-only mount)"
+          exit 1
+        fi
+        owner=$(stat -c '%u:%g' "$f")
+        rm -f "$f"
+        want="$(id -u):$(id -g)"
+        if [ "$owner" = "$want" ]; then
+          echo "\$HOME writes preserve uid/gid (owner=$owner)"
+          exit 0
+        fi
+        echo "\$HOME writes were squashed to owner=$owner (expected $want — likely an NFS all_squash or idmapd misconfig)"
+        exit 1
+      expect_exit: 0
+      timeout_seconds: 10

@@ -1,0 +1,23 @@
+schema_version: 3
+checks:
+  - id: workbench.ssl.cert-key-match
+    title: Workbench SSL certificate and key are paired
+    short_description: Verifying Workbench SSL cert/key pair and hostname match
+    category: SSL/TLS
+    tags: [ssl, workbench]
+    applies_to:
+      products: [workbench]
+    why: |
+      The customer must provide a full-chain SSL certificate and a private key
+      (no passphrase) before the Workbench install session. pev verifies the
+      cert and key are paired and that the cert covers the Workbench hostname.
+      A mismatched pair will block HTTPS configuration during install.
+    references:
+      - https://docs.posit.co/how-to-guides/guides/install-ssl-certificates.html#verify-pairing
+    primitive: x509
+    with:
+      cert_path: "{{ .Inputs.workbench_cert }}"
+      key_path: "{{ .Inputs.workbench_key }}"
+      verify_chain: true
+      match_hostname: "{{ .Inputs.workbench_hostname }}"
+      not_after_min_days: 30

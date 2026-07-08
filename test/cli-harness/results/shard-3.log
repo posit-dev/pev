@@ -1,0 +1,23 @@
+[PASS ] ni-discover                         0.2s  completed
+[PASS ] ni-completion_bash                  0.0s  completed
+[PASS ] ni-prod-idp-1                       0.2s  completed
+[PASS ] ni-prod-idp-9                       0.2s  completed
+[PASS ] ni-prod-idp-17                      0.3s  completed
+[PASS ] ni-prod-idp-25                      0.2s  completed
+[PASS ] ni-prod-idp-33                      0.0s  completed
+[PASS ] ni-prod-idp-41                      0.3s  completed
+[PASS ] ni-prod-idp-49                      0.0s  completed
+[PASS ] ni-prod-idp-57                      0.2s  completed
+[PASS ] ni-out-prof-2                       0.5s  completed
+[PASS ] ni-out-prof-10                      0.2s  completed
+[PASS ] ni-out-prof-18                      0.2s  completed
+[PASS ] ni-out-prof-26                      0.2s  completed
+[PASS ] ni-out-prof-34                      0.0s  completed
+[PASS ] ni-license                          0.3s  completed
+[PASS ] ni-tags-multi                       0.2s  completed
+[PASS ] yes-connect,packagemanager          0.3s  completed
+[PASS ] iv-wb-optin-many                    4.8s  completed
+[PASS ] iv-ctrlc-at-multiselect             0.6s  interrupted
+[PASS ] iv-double-ctrlc                     1.3s  interrupted
+
+21/21 PASS, 0 need attention

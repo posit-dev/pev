@@ -1,0 +1,87 @@
+schema_version: 3
+# Default Posit product ports must be bindable on this host. We open a
+# transient TCP listener and immediately close it. Failure modes the
+# check catches:
+#   - Another process already listening on the port.
+#   - selinux denying the bind (port label mismatch).
+#   - Kernel capabilities stripped on the rstudio-server / connect /
+#     pm binary in the customer's hardened image.
+# These checks SKIP under non-root for ports < 1024, since binding a
+# privileged port without CAP_NET_BIND_SERVICE always fails for an
+# unprivileged user — the failure isn't diagnostic.
+checks:
+  - id: net.bind.workbench-8787
+    title: Workbench default port 8787 is bindable
+    short_description: Checking Workbench port 8787 is bindable
+    category: Networking
+    tags: [network, bind, workbench]
+    applies_to:
+      products: [workbench]
+    why: |
+      Workbench's rstudio-server listens on 8787 by default. If pev
+      can't bind transiently, the install will fail at `systemctl
+      start rstudio-server` with a confusing "address already in use"
+      or "permission denied" error. If rstudio-server already owns
+      the port (post-install runs of pev), that counts as PASS. The
+      actual listener process is rserver-http (the HTTP front-end that
+      rserver execs), so it is on the expected-owner list too.
+    remediation: |
+      Run `ss -ltnp 'sport = :8787'` to identify the conflicting
+      listener. For SELinux: `audit2allow -a` will surface a denial;
+      apply with `setsebool -P` or change the port via
+      `www-port=` in /etc/rstudio/rserver.conf.
+    references:
+      - https://docs.posit.co/getting-started/networking.html
+    primitive: bind
+    with:
+      host: 0.0.0.0
+      port: 8787
+      timeout_seconds: 2
+      owned_by: [rstudio-server, rserver, rserver-http]
+
+  - id: net.bind.connect-3939
+    title: Connect default port 3939 is bindable
+    short_description: Checking Connect port 3939 is bindable
+    category: Networking
+    tags: [network, bind, connect]
+    applies_to:
+      products: [connect]
+    why: |
+      Connect listens on 3939 by default. A bind failure here means
+      another process is using the port or selinux is blocking the
+      bind for the unprivileged rstudio-connect user. If
+      rstudio-connect already owns the port, that counts as PASS.
+    remediation: |
+      `ss -ltnp 'sport = :3939'` to find the conflict; or change the
+      port with `Server.Address` in rstudio-connect.gcfg.
+    references:
+      - https://docs.posit.co/connect/admin/server-management/index.html
+    primitive: bind
+    with:
+      host: 0.0.0.0
+      port: 3939
+      timeout_seconds: 2
+      owned_by: [rstudio-connect, connect]
+
+  - id: net.bind.packagemanager-4242
+    title: Package Manager default port 4242 is bindable
+    short_description: Checking Package Manager port 4242 is bindable
+    category: Networking
+    tags: [network, bind, packagemanager]
+    applies_to:
+      products: [packagemanager]
+    why: |
+      Package Manager listens on 4242 by default. Bind failure here
+      blocks the install at startup. If rstudio-pm already owns the
+      port, that counts as PASS.
+    remediation: |
+      `ss -ltnp 'sport = :4242'` to find the conflict; or change the
+      port with `Server.Address` in rstudio-pm.gcfg.
+    references:
+      - https://docs.posit.co/rspm/admin/getting-started/configuration.html
+    primitive: bind
+    with:
+      host: 0.0.0.0
+      port: 4242
+      timeout_seconds: 2
+      owned_by: [rstudio-pm]

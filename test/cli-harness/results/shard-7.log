@@ -1,0 +1,22 @@
+[PASS ] ni-lintchecks                       0.0s  completed
+[PASS ] ni-diff-same                        0.0s  completed
+[PASS ] ni-prod-idp-5                       0.0s  completed
+[PASS ] ni-prod-idp-13                      0.2s  completed
+[PASS ] ni-prod-idp-21                      0.2s  completed
+[PASS ] ni-prod-idp-29                      0.2s  completed
+[PASS ] ni-prod-idp-37                      0.3s  completed
+[PASS ] ni-prod-idp-45                      0.3s  completed
+[PASS ] ni-prod-idp-53                      0.0s  completed
+[PASS ] ni-prod-idp-61                      0.0s  completed
+[PASS ] ni-out-prof-6                       0.2s  completed
+[PASS ] ni-out-prof-14                      0.2s  completed
+[PASS ] ni-out-prof-22                      0.2s  completed
+[PASS ] ni-out-prof-30                      0.0s  completed
+[PASS ] ni-out-prof-38                      0.2s  completed
+[PASS ] ni-checksfile                       0.6s  completed
+[PASS ] ni-loglevel-bogus                   0.3s  completed
+[PASS ] iv-all-products                     6.1s  completed
+[PASS ] iv-postgres-y-blank-host            4.4s  completed
+[PASS ] iv-ctrlc-mid-confirms               3.9s  interrupted
+
+20/20 PASS, 0 need attention

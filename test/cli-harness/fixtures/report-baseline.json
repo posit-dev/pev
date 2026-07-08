@@ -1,0 +1,98 @@
+{
+  "pev_version": "0.1.5",
+  "schema_version": 3,
+  "host": {
+    "hostname": "SamsWorkLaptop2",
+    "fqdn": "host.docker.internal",
+    "os": "ubuntu-24.04",
+    "os_pretty": "Ubuntu 24.04.4 LTS",
+    "os_family": "ubuntu",
+    "arch": "amd64",
+    "cpus": 20,
+    "mem_mb": 24031,
+    "disk_gb": {
+      "/": 621
+    },
+    "root": false,
+    "products": {
+      "workbench": false,
+      "connect": false,
+      "package_manager": false
+    },
+    "r_versions": [
+      "/opt/R/4.4.3/bin/R",
+      "/opt/R/4.5.2/bin/R"
+    ],
+    "python_versions": [
+      "/opt/python/3.12.9/bin/python",
+      "/opt/python/cpython-3.14.2-linux-x86_64-gnu/bin/python",
+      "/opt/python/cpython-3.14.6-linux-x86_64-gnu/bin/python"
+    ],
+    "quarto_versions": [
+      "/opt/quarto/1.7.32/bin/quarto",
+      "/opt/quarto/1.8.27/bin/quarto",
+      "/usr/local/bin/quarto"
+    ],
+    "has_uv": true,
+    "has_pip": true,
+    "has_apt": true,
+    "latest_r": "/opt/R/4.5.2/bin/R",
+    "latest_python": "/opt/python/3.12.9/bin/python",
+    "ppm_linux_slug": "noble"
+  },
+  "run": {
+    "products": [
+      "workbench"
+    ],
+    "inputs": {
+      "connect_cert": "",
+      "connect_hostname": "",
+      "connect_key": "",
+      "connect_smtp_host": "",
+      "home_share_path": "",
+      "idp": "none",
+      "idp_metadata_url": "",
+      "license_file": "",
+      "pam_test_user": "",
+      "postgres_host": "",
+      "postgres_port": "5432",
+      "ppm_cert": "",
+      "ppm_hostname": "",
+      "ppm_key": "",
+      "unprivileged_user": "samcofer",
+      "use_pro_drivers": "no",
+      "workbench_cert": "",
+      "workbench_hostname": "host.docker.internal",
+      "workbench_key": ""
+    }
+  },
+  "started_at": "2026-06-29T13:53:29.85427883-05:00",
+  "finished_at": "2026-06-29T13:53:30.14836687-05:00",
+  "summary": {
+    "total": 1,
+    "pass": 1,
+    "warn": 0,
+    "fail": 0,
+    "skip": 0,
+    "unknown": 0
+  },
+  "results": [
+    {
+      "id": "sizing.workbench.minimum",
+      "title": "Host meets Workbench minimum sizing (2 cores / 4 GB / 100 GB)",
+      "category": "Sizing",
+      "status": "pass",
+      "why": "Posit's official sizing guide lists 2 cores / 4 GB RAM / 100 GB disk as\nthe Workbench minimum (testing / sandbox tier). Production deployments\nshould target the Recommended tier (4–16 cores, 8–256 GB RAM, 100+ GB\nshared storage) and plan 2–4 GB of RAM per concurrent user.\n",
+      "evidence": [
+        {
+          "note": "cpus=20 mem_mb=24031 disk_gb=map[/:621]"
+        }
+      ],
+      "references": [
+        "https://support.posit.co/hc/en-us/articles/115002344588",
+        "https://docs.posit.co/ide/server-pro/admin/getting_started/requirements.html"
+      ],
+      "duration_ms": 0
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+[PASS ] ni-listchecks_products_workbench    0.0s  completed
+[PASS ] ni-diff-fwd                         0.6s  completed
+[PASS ] ni-prod-idp-3                       0.3s  completed
+[PASS ] ni-prod-idp-11                      0.3s  completed
+[PASS ] ni-prod-idp-19                      0.0s  completed
+[PASS ] ni-prod-idp-27                      0.3s  completed
+[PASS ] ni-prod-idp-35                      0.3s  completed
+[PASS ] ni-prod-idp-43                      0.3s  completed
+[PASS ] ni-prod-idp-51                      0.0s  completed
+[PASS ] ni-prod-idp-59                      0.7s  completed
+[PASS ] ni-out-prof-4                       0.2s  completed
+[PASS ] ni-out-prof-12                      0.2s  completed
+[PASS ] ni-out-prof-20                      0.2s  completed
+[PASS ] ni-out-prof-28                      0.3s  completed
+[PASS ] ni-out-prof-36                      0.3s  completed
+[PASS ] ni-hostnames                        0.2s  completed
+[PASS ] ni-no-user-checks                   0.2s  completed
+[PASS ] iv-workbench                        3.2s  completed
+[PASS ] iv-all-optin                        8.1s  completed
+[PASS ] iv-ctrlc-after-products             3.1s  interrupted
+[PASS ] iv-eof-no-input                    12.1s  correctly waits at prompt for input (no input given)
+
+21/21 PASS, 0 need attention

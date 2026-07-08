@@ -1,0 +1,22 @@
+schema_version: 3
+checks:
+  - id: connect.ssl.cert-key-match
+    title: Connect SSL certificate and key are paired
+    short_description: Verifying Connect SSL cert/key pair and hostname match
+    category: SSL/TLS
+    tags: [ssl, connect]
+    applies_to:
+      products: [connect]
+    why: |
+      A mismatched cert/key keeps Connect from serving HTTPS. Connect's
+      hostname must be separate from Workbench and Package Manager since each
+      product terminates TLS independently.
+    references:
+      - https://docs.posit.co/connect/admin/getting-started/local-install/initial-configuration/ssl-certificates/index.html
+    primitive: x509
+    with:
+      cert_path: "{{ .Inputs.connect_cert }}"
+      key_path: "{{ .Inputs.connect_key }}"
+      verify_chain: true
+      match_hostname: "{{ .Inputs.connect_hostname }}"
+      not_after_min_days: 30

@@ -1,0 +1,299 @@
+schema_version: 3
+# Host security posture. SELinux Enforcing and AppArmor Enabled are the two
+# top causes of "process started but cannot bind/write/exec" tickets, so
+# both are gated as failures rather than informational. Firewall daemons get
+# both an active/inactive posture report AND a rule audit (when the daemon
+# is active) for the canonical Posit product ports.
+checks:
+  - id: sec.selinux.not-enforcing
+    title: SELinux is not Enforcing
+    short_description: Checking SELinux is not in Enforcing mode
+    category: Security
+    tags: [selinux, security]
+    applies_to:
+      os: [rhel-8, rhel-9, rhel-10]
+    why: |
+      SELinux in Enforcing mode is the most common cause of post-install
+      "the service started but the port won't bind / the socket won't open
+       / the file won't write" tickets on RHEL-family hosts. There is no
+      bundled Posit policy module, so an enforcing host needs a custom
+      module or `setsebool` adjustments before Workbench / Connect / PPM
+      will run cleanly. Permissive and Disabled both PASS.
+    remediation: |
+      Either set SELinux to Permissive (`sudo setenforce 0` and edit
+      /etc/selinux/config), or author a custom policy module that allows
+      the Posit binaries to bind their listen ports and write to their
+      data directories. Posit-published example policy modules are linked
+      in the troubleshooting article below.
+    references:
+      - https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html/using_selinux/
+      - https://support.posit.co/hc/en-us/sections/360008902394-Security
+    primitive: selinux
+    with:
+      expect: not_enforcing
+
+  - id: sec.apparmor.not-enabled
+    title: AppArmor is not enabled
+    short_description: Checking AppArmor is not enabled
+    category: Security
+    tags: [apparmor, security]
+    applies_to:
+      os: [ubuntu-22.04, ubuntu-24.04]
+    why: |
+      AppArmor on Ubuntu confines binaries to their declared paths. There
+      is no bundled Posit profile, so an enabled AppArmor will produce
+      EACCES from rsession spawning under /tmp, from rstudio-connect's
+      content sandbox, and from rstudio-pm's repository writes. Disabled
+      and absent both PASS.
+    remediation: |
+      Either disable AppArmor (`sudo systemctl disable --now apparmor`
+      and reboot, or boot with `apparmor=0`), or author a custom AppArmor
+      profile in complain mode that allows the Posit binaries to read,
+      write, and exec their data directories.
+    references:
+      - https://ubuntu.com/server/docs/security-apparmor
+    primitive: apparmor
+    with:
+      expect: not_enabled
+
+  - id: sec.firewalld.inactive
+    title: firewalld is not active (or rules permit Posit ports)
+    short_description: Checking firewalld posture
+    category: Security
+    tags: [firewall, security]
+    applies_to:
+      os: [rhel-8, rhel-9, rhel-10]
+    why: |
+      firewalld is the default RHEL firewall. Reported here only as
+      posture; the rule audit below is the load-bearing check when the
+      daemon is active.
+    primitive: systemd
+    with:
+      unit: firewalld
+      expect: inactive
+      timeout_seconds: 5
+
+  - id: sec.firewalld.posit-ports-allowed
+    title: firewalld permits inbound Posit product ports (when active)
+    short_description: Auditing firewalld rules for Posit ports
+    category: Security
+    tags: [firewall, security, ports]
+    applies_to:
+      os: [rhel-8, rhel-9, rhel-10]
+    why: |
+      When firewalld is active, it must explicitly allow the canonical
+      Posit ports — 80, 443, 8787 (Workbench), 3939 (Connect), 4242
+      (Package Manager), and 5559 (Workbench / Connect Launcher). Without
+      explicit `firewall-cmd --add-port` rules in a permanent zone, end
+      users get connection-refused even though the product is running.
+      The front-door HTTP(S) ports 80/443 are blocking (FAIL) — every
+      user reaches the products through them; the per-product ports
+      (8787/3939/4242/5559) are advisory (WARN), since a deployment may
+      front them with a reverse proxy on 80/443 and never expose them
+      directly. This check no-ops when firewalld is inactive (covered
+      above).
+    remediation: |
+      Open the ports your products use, e.g.
+        sudo firewall-cmd --permanent --add-port=8787/tcp   # Workbench
+        sudo firewall-cmd --permanent --add-port=3939/tcp   # Connect
+        sudo firewall-cmd --permanent --add-port=4242/tcp   # PPM
+        sudo firewall-cmd --permanent --add-port=443/tcp    # HTTPS
+        sudo firewall-cmd --permanent --add-port=80/tcp     # HTTP redirect
+        sudo firewall-cmd --permanent --add-port=5559/tcp   # Launcher
+        sudo firewall-cmd --reload
+    references:
+      - https://docs.posit.co/getting-started/networking.html
+    primitive: cmd
+    with:
+      cmd: |
+        if ! command -v firewall-cmd >/dev/null 2>&1; then
+          echo "firewalld absent; skipping rule audit"; exit 0
+        fi
+        if ! systemctl is-active --quiet firewalld 2>/dev/null; then
+          echo "firewalld inactive; skipping rule audit"; exit 0
+        fi
+        ports=$(firewall-cmd --list-ports 2>/dev/null)
+        services=$(firewall-cmd --list-services 2>/dev/null)
+        echo "ports=$ports"
+        echo "services=$services"
+        missing_frontdoor=
+        missing_product=
+        for p in 80 443 8787 3939 4242 5559; do
+          # Match either explicit port rules or named services for 80/443.
+          if echo "$ports" | grep -qwE "${p}/tcp"; then continue; fi
+          case "$p" in
+            80)  echo "$services" | grep -qw http  && continue ;;
+            443) echo "$services" | grep -qw https && continue ;;
+          esac
+          case "$p" in
+            80|443) missing_frontdoor="$missing_frontdoor $p" ;;
+            *)      missing_product="$missing_product $p" ;;
+          esac
+        done
+        # Front-door 80/443 blocked → FAIL (exit 1). Only product ports
+        # blocked → WARN (exit 2). Report both sets so the SE sees the full
+        # picture either way.
+        if [ -n "$missing_frontdoor" ]; then
+          echo "missing-frontdoor-ports:$missing_frontdoor${missing_product:+ (also product:$missing_product)}"
+          exit 1
+        fi
+        if [ -n "$missing_product" ]; then
+          echo "missing-product-ports:$missing_product (front-door 80/443 open; product ports may be proxied — advisory)"
+          exit 2
+        fi
+        echo "all canonical Posit ports allowed"
+      expect_exit: 0
+      warn_exit: 2
+      timeout_seconds: 10
+
+  - id: sec.iptables.inactive
+    title: iptables service is not active (or rules permit Posit ports)
+    short_description: Checking iptables service posture
+    category: Security
+    tags: [firewall, security]
+    why: |
+      Some RHEL deployments still drive iptables directly via the iptables
+      systemd service. As with firewalld, pev surfaces whether it is active
+      so SEs know to look for rules.
+    primitive: systemd
+    with:
+      unit: iptables
+      expect: inactive
+      timeout_seconds: 5
+
+  - id: sec.iptables.posit-ports-allowed
+    title: iptables permits inbound Posit product ports (when active)
+    short_description: Auditing iptables rules for Posit ports
+    category: Security
+    tags: [firewall, security, ports]
+    why: |
+      When the iptables service is active, the INPUT chain must accept
+      80, 443, 8787, 3939, 4242, and 5559/tcp — either via a default
+      ACCEPT policy, an explicit ACCEPT rule per port, or a stateful
+      ESTABLISHED,RELATED + per-port ACCEPT pair. The front-door HTTP(S)
+      ports 80/443 are blocking (FAIL); the per-product ports
+      (8787/3939/4242/5559) are advisory (WARN), since they may be fronted
+      by a reverse proxy on 80/443. No-ops when iptables is inactive or
+      absent.
+    remediation: |
+      Add per-port ACCEPT rules ahead of any DROP/REJECT, then persist:
+        sudo iptables -I INPUT -p tcp --dport 8787 -j ACCEPT
+        sudo iptables -I INPUT -p tcp --dport 3939 -j ACCEPT
+        sudo iptables -I INPUT -p tcp --dport 4242 -j ACCEPT
+        sudo iptables -I INPUT -p tcp --dport 443  -j ACCEPT
+        sudo iptables -I INPUT -p tcp --dport 80   -j ACCEPT
+        sudo iptables -I INPUT -p tcp --dport 5559 -j ACCEPT
+        sudo iptables-save | sudo tee /etc/sysconfig/iptables
+    primitive: cmd
+    with:
+      cmd: |
+        if ! command -v iptables >/dev/null 2>&1; then
+          echo "iptables absent; skipping rule audit"; exit 0
+        fi
+        if ! systemctl is-active --quiet iptables 2>/dev/null; then
+          echo "iptables service inactive; skipping rule audit"; exit 0
+        fi
+        rules=$(iptables -S INPUT 2>/dev/null)
+        echo "$rules"
+        # If INPUT policy is ACCEPT and there are no DROP/REJECT rules, all ports pass.
+        if echo "$rules" | head -1 | grep -q '^-P INPUT ACCEPT' && \
+           ! echo "$rules" | grep -qE '^-A INPUT.*-j (DROP|REJECT)'; then
+          echo "INPUT policy ACCEPT with no DROP/REJECT rules"
+          exit 0
+        fi
+        missing_frontdoor=
+        missing_product=
+        for p in 80 443 8787 3939 4242 5559; do
+          if ! echo "$rules" | grep -qE "^-A INPUT.* --dport ${p}\b.* -j ACCEPT"; then
+            case "$p" in
+              80|443) missing_frontdoor="$missing_frontdoor $p" ;;
+              *)      missing_product="$missing_product $p" ;;
+            esac
+          fi
+        done
+        # Front-door 80/443 blocked → FAIL (exit 1); only product ports
+        # blocked → WARN (exit 2).
+        if [ -n "$missing_frontdoor" ]; then
+          echo "missing-frontdoor-ports:$missing_frontdoor${missing_product:+ (also product:$missing_product)}"
+          exit 1
+        fi
+        if [ -n "$missing_product" ]; then
+          echo "missing-product-ports:$missing_product (front-door 80/443 open; product ports may be proxied — advisory)"
+          exit 2
+        fi
+        echo "all canonical Posit ports allowed"
+      expect_exit: 0
+      warn_exit: 2
+      timeout_seconds: 10
+
+  - id: sec.nftables.inactive
+    title: nftables service is not active (or rules permit Posit ports)
+    short_description: Checking nftables service posture
+    category: Security
+    tags: [firewall, security]
+    why: |
+      nftables is the modern Linux firewall front-end. Reported here only
+      as posture; the rule audit below is the load-bearing check when the
+      daemon is active.
+    primitive: systemd
+    with:
+      unit: nftables
+      expect: inactive
+      timeout_seconds: 5
+
+  - id: sec.nftables.posit-ports-allowed
+    title: nftables permits inbound Posit product ports (when active)
+    short_description: Auditing nftables ruleset for Posit ports
+    category: Security
+    tags: [firewall, security, ports]
+    why: |
+      When nftables is active, the input chain must accept 80, 443, 8787,
+      3939, 4242, and 5559/tcp via explicit `tcp dport <port> accept`
+      statements or a per-port set membership rule. The front-door HTTP(S)
+      ports 80/443 are blocking (FAIL); the per-product ports
+      (8787/3939/4242/5559) are advisory (WARN), since they may be fronted
+      by a reverse proxy on 80/443. No-ops when nftables is inactive or
+      absent.
+    remediation: |
+      Add per-port accept rules to your input chain, e.g.
+        nft add rule inet filter input tcp dport {80,443,8787,3939,4242,5559} accept
+      then `nft list ruleset > /etc/nftables.conf` to persist.
+    primitive: cmd
+    with:
+      cmd: |
+        if ! command -v nft >/dev/null 2>&1; then
+          echo "nft absent; skipping rule audit"; exit 0
+        fi
+        if ! systemctl is-active --quiet nftables 2>/dev/null; then
+          echo "nftables service inactive; skipping rule audit"; exit 0
+        fi
+        rs=$(nft -a list ruleset 2>/dev/null)
+        if [ -z "$rs" ]; then
+          echo "ruleset empty; default-permit"; exit 0
+        fi
+        echo "$rs" | head -80
+        missing_frontdoor=
+        missing_product=
+        for p in 80 443 8787 3939 4242 5559; do
+          # Match either an explicit "tcp dport <p>" or set membership "{ ... <p> ... }".
+          if ! echo "$rs" | grep -qE "tcp dport ($p\b|\{[^}]*\b${p}\b[^}]*\})[^,]*accept"; then
+            case "$p" in
+              80|443) missing_frontdoor="$missing_frontdoor $p" ;;
+              *)      missing_product="$missing_product $p" ;;
+            esac
+          fi
+        done
+        # Front-door 80/443 blocked → FAIL (exit 1); only product ports
+        # blocked → WARN (exit 2).
+        if [ -n "$missing_frontdoor" ]; then
+          echo "missing-frontdoor-ports:$missing_frontdoor${missing_product:+ (also product:$missing_product)}"
+          exit 1
+        fi
+        if [ -n "$missing_product" ]; then
+          echo "missing-product-ports:$missing_product (front-door 80/443 open; product ports may be proxied — advisory)"
+          exit 2
+        fi
+        echo "all canonical Posit ports allowed"
+      expect_exit: 0
+      warn_exit: 2
+      timeout_seconds: 10

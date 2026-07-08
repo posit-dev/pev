@@ -1,0 +1,72 @@
+schema_version: 3
+# Sizing minimums match the "Minimum" tier in Posit's official sizing
+# recommendations. Anything below these values is testing/sandbox territory
+# only — production deployments should follow the "Recommended" tier in the
+# same article.
+#
+# Status split (see internal/primitives/sizing.go): CPU and memory shortfalls
+# are blocking (FAIL) — the product will not run acceptably below them. A disk
+# shortfall is advisory (WARN): disk is the easiest dimension to grow after the
+# fact (attach a volume, resize the fs, relocate a data dir), so it is flagged
+# without failing an otherwise-installable host.
+# Reference: https://support.posit.co/hc/en-us/articles/115002344588
+checks:
+  - id: sizing.workbench.minimum
+    title: Host meets Workbench minimum sizing (2 cores / 4 GB / 100 GB)
+    short_description: Checking Workbench minimum CPU/RAM/disk sizing
+    tags: [sizing, workbench]
+    applies_to:
+      products: [workbench]
+    why: |
+      Posit's official sizing guide lists 2 cores / 4 GB RAM / 100 GB disk as
+      the Workbench minimum (testing / sandbox tier). Production deployments
+      should target the Recommended tier (4–16 cores, 8–256 GB RAM, 100+ GB
+      shared storage) and plan 2–4 GB of RAM per concurrent user.
+    references:
+      - https://support.posit.co/hc/en-us/articles/115002344588
+      - https://docs.posit.co/ide/server-pro/admin/getting_started/requirements.html
+    primitive: sizing
+    with:
+      cpus_min: 2
+      mem_gb_min: 4
+      disk_gb_min: { /: 100 }
+
+  - id: sizing.connect.minimum
+    title: Host meets Connect minimum sizing (2 cores / 4 GB / 100 GB)
+    short_description: Checking Connect minimum CPU/RAM/disk sizing
+    tags: [sizing, connect]
+    applies_to:
+      products: [connect]
+    why: |
+      Posit's official sizing guide lists 2 cores / 4 GB RAM / 100 GB disk as
+      the Connect minimum (testing tier). Production deployments should target
+      the Recommended tier (8–16 cores, 32–128 GB RAM, 100+ GB shared storage);
+      Connect content runs in-process and benefits from additional cores.
+    references:
+      - https://support.posit.co/hc/en-us/articles/115002344588
+      - https://docs.posit.co/connect/admin/getting-started/requirements/index.html
+    primitive: sizing
+    with:
+      cpus_min: 2
+      mem_gb_min: 4
+      disk_gb_min: { /: 100 }
+
+  - id: sizing.packagemanager.minimum
+    title: Host meets Package Manager minimum sizing (2 cores / 2 GB / 200 GB)
+    short_description: Checking Package Manager minimum CPU/RAM/disk sizing
+    tags: [sizing, packagemanager]
+    applies_to:
+      products: [packagemanager]
+    why: |
+      Posit's official sizing guide lists 2 cores / 2 GB RAM / 200 GB disk as
+      the Package Manager minimum. The Recommended tier (2 cores / 4 GB /
+      500 GB) is the production target — a full CRAN mirror grows continuously
+      past 150 GB and running out of disk mid-sync corrupts the repository.
+    references:
+      - https://support.posit.co/hc/en-us/articles/115002344588
+      - https://docs.posit.co/rspm/admin/getting-started/requirements.html
+    primitive: sizing
+    with:
+      cpus_min: 2
+      mem_gb_min: 2
+      disk_gb_min: { /: 200 }

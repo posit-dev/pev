@@ -1,0 +1,80 @@
+version: 2
+project_name: pev
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: pev
+    binary: pev
+    main: ./
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: bin-only
+    formats: [binary]
+    name_template: "pev_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "pev_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+sboms:
+  - artifacts: archive
+
+# Cosign keyless signing of the checksums file (the binaries are verified
+# transitively via the signed checksum file). cosign 3.x (shipped by
+# cosign-installer v4.x) defaults `--new-bundle-format` on, which folds the
+# signature AND the signing certificate into a single Sigstore bundle. We
+# emit that one `.bundle` artifact instead of the legacy `.sig` + `.pem`
+# pair; `cosign verify-blob --bundle` reads both the signature and the cert
+# chain from it.
+#
+# `signature:` MUST point at the .bundle so goreleaser tracks and uploads
+# the file --bundle produces; otherwise it lands in dist/ but is never
+# attached as a release asset. The release.yml self-verify step is the
+# backstop that catches that class of regression (it caught the dropped
+# .pem on v0.0.4). Bump cosign-installer deliberately alongside this block.
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.bundle"
+    output: true
+    args:
+      - sign-blob
+      - "--yes"
+      - "--new-bundle-format=true"
+      - "--bundle=${signature}"
+      - "${artifact}"
+
+release:
+  github:
+    owner: posit-dev
+    name: pev
+  draft: false
+  prerelease: auto
+  # Ship the installer alongside the binaries so users on a tagged release can
+  # `curl ... releases/download/<tag>/install.sh | sh` to pin the bootstrap
+  # script to the same version they are installing. `main` keeps working as the
+  # always-latest one-liner.
+  extra_files:
+    - glob: scripts/install.sh
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

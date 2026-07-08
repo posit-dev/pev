@@ -1,0 +1,23 @@
+[PASS ] ni-listchecks_tags_network          0.0s  completed
+[PASS ] ni-diff-rev                         0.0s  completed
+[PASS ] ni-prod-idp-4                       0.4s  completed
+[PASS ] ni-prod-idp-12                      0.0s  completed
+[PASS ] ni-prod-idp-20                      0.6s  completed
+[PASS ] ni-prod-idp-28                      0.2s  completed
+[PASS ] ni-prod-idp-36                      0.2s  completed
+[PASS ] ni-prod-idp-44                      0.2s  completed
+[PASS ] ni-prod-idp-52                      0.0s  completed
+[PASS ] ni-prod-idp-60                      0.2s  completed
+[PASS ] ni-out-prof-5                       0.2s  completed
+[PASS ] ni-out-prof-13                      0.2s  completed
+[PASS ] ni-out-prof-21                      0.2s  completed
+[PASS ] ni-out-prof-29                      0.3s  completed
+[PASS ] ni-out-prof-37                      0.3s  completed
+[PASS ] ni-hostnames-malformed              0.3s  completed
+[PASS ] ni-loglevel-trace                   0.2s  completed
+[PASS ] iv-connect                          4.1s  completed
+[PASS ] iv-wb-blank-hostname                4.0s  completed
+[PASS ] iv-ctrlz-after-products             3.6s  interrupted
+[PASS ] iv-yes-flag                         0.3s  completed
+
+21/21 PASS, 0 need attention
