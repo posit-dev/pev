@@ -85,8 +85,10 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 binary_name="pev_linux_${arch}"
 checksums_name="pev_${version_no_v}_checksums.txt"
 
-sig_name="${checksums_name}.sig"
-cert_name="${checksums_name}.pem"
+# cosign 3.x (shipped with the release since the --new-bundle-format switch)
+# folds the signature AND signing certificate into a single Sigstore bundle.
+# The release publishes only this .bundle, not the legacy .sig + .pem pair.
+bundle_name="${checksums_name}.bundle"
 
 log "downloading $binary_name ($version)"
 curl -fsSL "${RELEASES_DOWNLOAD}/${version}/${binary_name}"   -o "${tmp}/${binary_name}"
@@ -97,17 +99,14 @@ curl -fsSL "${RELEASES_DOWNLOAD}/${version}/${checksums_name}" -o "${tmp}/${chec
 # this step, an attacker with control of the GitHub release's binary asset
 # could ship matching checksums and the SHA-256 check would happily pass.
 if command -v cosign >/dev/null 2>&1; then
-  log "downloading $sig_name and $cert_name"
-  if ! curl -fsSL "${RELEASES_DOWNLOAD}/${version}/${sig_name}"  -o "${tmp}/${sig_name}"; then
-    err "cosign signature ${sig_name} not found at release — refusing to install"
-  fi
-  if ! curl -fsSL "${RELEASES_DOWNLOAD}/${version}/${cert_name}" -o "${tmp}/${cert_name}"; then
-    err "cosign certificate ${cert_name} not found at release — refusing to install"
+  log "downloading $bundle_name"
+  if ! curl -fsSL "${RELEASES_DOWNLOAD}/${version}/${bundle_name}" -o "${tmp}/${bundle_name}"; then
+    err "cosign bundle ${bundle_name} not found at release — refusing to install"
   fi
   log "verifying cosign signature on ${checksums_name}"
   cosign verify-blob \
-    --certificate "${tmp}/${cert_name}" \
-    --signature "${tmp}/${sig_name}" \
+    --bundle "${tmp}/${bundle_name}" \
+    --new-bundle-format \
     --certificate-identity-regexp "https://github.com/${REPO}/.github/workflows/release.yml@.*" \
     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
     "${tmp}/${checksums_name}" >/dev/null \
