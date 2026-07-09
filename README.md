@@ -56,8 +56,9 @@ sh install.sh
 Releases are signed with [cosign](https://github.com/sigstore/cosign) keyless OIDC. For environments that require manual signature verification:
 
 ```bash
-VERSION=v0.0.2  # or whichever release you want
-curl -fsSL https://github.com/posit-dev/pev/releases/download/${VERSION}/pev_linux_amd64                          -o pev
+VERSION=v0.5.0  # or whichever release you want
+# Download the binary under its published name so it matches the checksum entry.
+curl -fsSL https://github.com/posit-dev/pev/releases/download/${VERSION}/pev_linux_amd64                          -o pev_linux_amd64
 curl -fsSL https://github.com/posit-dev/pev/releases/download/${VERSION}/pev_${VERSION#v}_checksums.txt           -o checksums.txt
 curl -fsSL https://github.com/posit-dev/pev/releases/download/${VERSION}/pev_${VERSION#v}_checksums.txt.bundle    -o checksums.txt.bundle
 
@@ -69,7 +70,7 @@ cosign verify-blob \
   checksums.txt
 
 sha256sum --check --ignore-missing checksums.txt
-chmod +x pev && ./pev version
+chmod +x pev_linux_amd64 && mv pev_linux_amd64 pev && ./pev version
 ```
 
 ## Quickstart
