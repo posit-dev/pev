@@ -57,7 +57,8 @@ checks:
       those distros and only enforces on stock RHEL. Cloud
       marketplace/PAYG RHEL (AWS/Azure/GCP) gets packages via Red Hat
       Update Infrastructure (RHUI) and is never registered with
-      subscription-manager, so a RHUI host PASSes without it.
+      subscription-manager, so a RHUI host PASSes without it. A registered
+      host reports "Overall Status: Current" or "Registered"; both PASS.
     remediation: |
       Run `subscription-manager register --username=<user> --password=<pw>`
       (or attach via Activation Key) and `subscription-manager attach
@@ -92,11 +93,12 @@ checks:
           echo "subscription-manager not installed on a host that identifies as RHEL"
           exit 1
         fi
-        if subscription-manager status 2>&1 | grep -q 'Overall Status: Current'; then
-          echo "subscription-manager reports Overall Status: Current"
+        sm_status="$(subscription-manager status 2>&1)"
+        if echo "$sm_status" | grep -Eq 'Overall Status: (Current|Registered)'; then
+          echo "subscription-manager reports $(echo "$sm_status" | grep 'Overall Status:')"
           exit 0
         fi
-        echo "RHEL host is not RHUI-entitled and subscription-manager is not Current — register/attach before installing"
+        echo "RHEL host is not RHUI-entitled and subscription-manager is not Current/Registered — register/attach before installing"
         exit 1
       expect_exit: 0
       skip_exit: 2
