@@ -42,6 +42,18 @@ type DiffEntry struct {
 	NowEvidence string        `json:"now_evidence,omitempty"`
 }
 
+// OrderByRecency returns the two reports as (baseline, current) ordered by
+// their started_at timestamp: the older run is always baseline and the more
+// recent is always current, regardless of the order they are passed in. Ties
+// (identical started_at) preserve the given order, so callers get stable
+// output for reports produced at the same instant.
+func OrderByRecency(x, y checks.Report) (baseline, current checks.Report) {
+	if y.StartedAt.Before(x.StartedAt) {
+		return y, x
+	}
+	return x, y
+}
+
 // Compute returns a Diff comparing baseline (a) against current (b).
 // It errors if schema_versions differ.
 func Compute(a, b checks.Report) (Diff, error) {

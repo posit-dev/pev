@@ -2,6 +2,7 @@ package report
 
 import (
 	"testing"
+	"time"
 
 	"github.com/posit-dev/pev/internal/checks"
 )
@@ -143,6 +144,71 @@ func TestComputeWarnRegressionFlag(t *testing.T) {
 	}
 	if !d.HasRegressions() {
 		t.Fatal("PASS→WARN must register as a regression")
+	}
+}
+
+// TestOrderByRecencyIsInputOrderIndependent proves the newer report (by
+// started_at) is always returned as current and the older as baseline, so
+// `pev diff old.json new.json` and `pev diff new.json old.json` produce the
+// same regression/improvement classification.
+func TestOrderByRecencyIsInputOrderIndependent(t *testing.T) {
+	older := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 7, 15, 10, 0, 0, 0, time.UTC)
+
+	old := checks.Report{
+		SchemaVersion: 3,
+		StartedAt:     older,
+		Results:       []checks.Result{{ID: "x", Status: checks.StatusPass}},
+	}
+	recent := checks.Report{
+		SchemaVersion: 3,
+		StartedAt:     newer,
+		Results:       []checks.Result{{ID: "x", Status: checks.StatusFail}}, // regressed since old
+	}
+
+	// Regardless of argument order, baseline must be the older run and current
+	// the newer, so the PASS→FAIL move always reads as a regression.
+	for _, tc := range []struct {
+		name string
+		x, y checks.Report
+	}{
+		{"old_then_new", old, recent},
+		{"new_then_old", recent, old},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			baseline, current := OrderByRecency(tc.x, tc.y)
+			if !baseline.StartedAt.Equal(older) {
+				t.Fatalf("baseline started_at = %s, want %s", baseline.StartedAt, older)
+			}
+			if !current.StartedAt.Equal(newer) {
+				t.Fatalf("current started_at = %s, want %s", current.StartedAt, newer)
+			}
+			d, err := Compute(baseline, current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !d.HasRegressions() {
+				t.Fatalf("expected PASS→FAIL regression regardless of input order")
+			}
+			if len(d.Regressions) != 1 || d.Regressions[0].ID != "x" {
+				t.Fatalf("regressions: %+v", d.Regressions)
+			}
+		})
+	}
+}
+
+// TestOrderByRecencyTiePreservesInputOrder pins the tie-break: identical
+// started_at leaves the given order untouched, so output stays stable.
+func TestOrderByRecencyTiePreservesInputOrder(t *testing.T) {
+	ts := time.Date(2026, 7, 15, 10, 0, 0, 0, time.UTC)
+	// SchemaVersion is used purely as an identity marker to tell the two
+	// same-timestamp reports apart.
+	x := checks.Report{StartedAt: ts, SchemaVersion: 1}
+	y := checks.Report{StartedAt: ts, SchemaVersion: 2}
+
+	baseline, current := OrderByRecency(x, y)
+	if baseline.SchemaVersion != 1 || current.SchemaVersion != 2 {
+		t.Fatalf("tie must preserve input order: baseline=%d current=%d", baseline.SchemaVersion, current.SchemaVersion)
 	}
 }
 
