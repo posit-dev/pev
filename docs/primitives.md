@@ -94,7 +94,18 @@ with:
   method: GET
   timeout_seconds: 5
   accept_status: [200, 204, 301, 302]   # optional; otherwise any 2xx
+  fallback_paths:                        # optional; retried on primary failure
+    - ".well-known/openid-configuration"
 ```
+
+`fallback_paths` handles the case where the supplied `url` is a prefix of the
+real target. If the primary request fails, each path is appended to `url` (one
+slash at the boundary regardless of trailing/leading slashes) and retried in
+order; the first attempt to pass wins, and the report evidence lists every URL
+probed. This lets an SE who pastes a bare OIDC issuer URL
+(`https://idp.example.com`) still pass once `.well-known/openid-configuration`
+is appended. A malformed request or an empty `url` short-circuits before any
+fallback.
 
 ## `x509`
 

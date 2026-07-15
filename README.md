@@ -206,7 +206,8 @@ under `/opt`.
 | `lang.python.versioned-install` | At least one Python install at `/opt/python/<version>/bin/python3` |
 | `lang.python.uv-venv` | Unprivileged user can create a uv venv with the latest Python |
 | `lang.python.pip-venv` | Unprivileged user can create a venv via `python -m venv` + pip install |
-| `lang.quarto.present` | Quarto is available on PATH |
+| `lang.quarto.versioned-install` | At least one Quarto install at `/opt/quarto/<version>/bin/quarto` |
+| `lang.quarto.path` | Quarto on PATH |
 | `lang.idp.metadata` | IdP metadata or discovery URL is reachable |
 | `auth.pam.users-resolvable` | Customer-supplied PAM/SSO test user resolves through nsswitch |
 

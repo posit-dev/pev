@@ -43,17 +43,35 @@ checks:
       glob: "*/bin/python3"
       glob_min_matches: 1
 
-  - id: lang.quarto.present
-    title: Quarto is available on PATH
-    short_description: Checking quarto is on PATH or under /opt/quarto
+  - id: lang.quarto.versioned-install
+    title: At least one Quarto install at /opt/quarto/<version>/bin/quarto
+    short_description: Looking for versioned Quarto installs under /opt/quarto
+    category: Product
+    tags: [quarto]
+    why: |
+      Posit recommends a versioned Quarto install under /opt/quarto/<version>
+      so multiple Quarto versions can coexist, mirroring the /opt/R and
+      /opt/python layout. Connect renders Quarto content server-side from
+      these installs.
+    references:
+      - https://docs.posit.co/resources/install-quarto.html
+    primitive: dir
+    with:
+      path: /opt/quarto
+      must_exist: true
+      glob: "*/bin/quarto"
+      glob_min_matches: 1
+
+  - id: lang.quarto.path
+    title: Quarto on PATH
+    short_description: Checking quarto is on PATH
     category: Product
     tags: [quarto]
     why: |
       RStudio Pro sessions ship a bundled Quarto, but VS Code, Positron, and
-      JupyterLab sessions need quarto on PATH. Connect renders Quarto content
-      server-side. Posit recommends a versioned install at
-      /opt/quarto/<version>/bin/quarto with a /usr/local/bin/quarto symlink
-      for PATH visibility.
+      JupyterLab sessions invoke quarto from PATH. Posit recommends a
+      /usr/local/bin/quarto symlink to the versioned /opt/quarto install so
+      it is visible on PATH.
     references:
       - https://docs.posit.co/resources/install-quarto.html
     primitive: cmd
@@ -63,11 +81,7 @@ checks:
           echo "quarto on PATH: $path"
           exit 0
         fi
-        if found=$(ls /opt/quarto/*/bin/quarto 2>/dev/null); then
-          echo "quarto found under /opt/quarto: $(echo "$found" | tr '\n' ' ')"
-          exit 0
-        fi
-        echo "quarto is not on PATH and no install was found under /opt/quarto"
+        echo "quarto is not on PATH"
         exit 1
       expect_exit: 0
 
@@ -228,3 +242,9 @@ checks:
     with:
       url: "{{ .Inputs.idp_metadata_url }}"
       timeout_seconds: 8
+      # If the SE supplied a bare OIDC issuer URL instead of the full
+      # discovery document URL, retry with the well-known suffix appended
+      # before failing. SAML metadata URLs won't match these and fail as
+      # before, which is correct.
+      fallback_paths:
+        - ".well-known/openid-configuration"
