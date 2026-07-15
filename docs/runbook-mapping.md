@@ -28,7 +28,7 @@ checks apply to any host running Workbench, Connect, or Package Manager.
 | Distro package manager healthy | `pkg-mgr.apt.update`, `pkg-mgr.apt.repolist-fresh`, `pkg-mgr.dnf.repolist`, `pkg-mgr.dnf.makecache` |
 | System dependencies (build deps for R/Python packages) | `pkg.openssl-dev`, `pkg.libcurl-dev`, `pkg.libxml2-dev` |
 | Posit Pro Drivers installed (when declared) | `pkg.pro-drivers.installed` |
-| Security posture (umask, SELinux/AppArmor, firewalls) | `sec.umask.permissive`, `sec.selinux.not-enforcing`, `sec.apparmor.not-enabled`, `sec.firewalld.inactive`, `sec.firewalld.posit-ports-allowed`, `sec.iptables.inactive`, `sec.iptables.posit-ports-allowed`, `sec.nftables.inactive`, `sec.nftables.posit-ports-allowed` |
+| Security posture (umask, SELinux/AppArmor, firewalls) | `sec.umask.permissive`, `sec.selinux.not-enforcing`, `sec.apparmor.not-enabled`, `sec.firewalld.inactive`, `sec.iptables.inactive`, `sec.nftables.inactive`, `sec.firewall.workbench-port`, `sec.firewall.connect-port`, `sec.firewall.packagemanager-port` |
 | R installed under `/opt/R/<version>` | `lang.r.versioned-install` |
 | Python installed under `/opt/python/<version>` | `lang.python.versioned-install` |
 | Quarto installed under `/opt/quarto/<version>` | `lang.quarto.versioned-install` |

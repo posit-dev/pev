@@ -168,11 +168,11 @@ The full built-in catalog (run `pev list-checks` for the live version):
 | `sec.selinux.not-enforcing` | SELinux is not Enforcing |
 | `sec.apparmor.not-enabled` | AppArmor is not enabled |
 | `sec.firewalld.inactive` | firewalld is not active (or rules permit Posit ports) |
-| `sec.firewalld.posit-ports-allowed` | firewalld permits inbound Posit product ports (when active) |
 | `sec.iptables.inactive` | iptables service is not active (or rules permit Posit ports) |
-| `sec.iptables.posit-ports-allowed` | iptables permits inbound Posit product ports (when active) |
 | `sec.nftables.inactive` | nftables service is not active (or rules permit Posit ports) |
-| `sec.nftables.posit-ports-allowed` | nftables permits inbound Posit product ports (when active) |
+| `sec.firewall.workbench-port` | Firewall permits inbound access to Workbench |
+| `sec.firewall.connect-port` | Firewall permits inbound access to Connect |
+| `sec.firewall.packagemanager-port` | Firewall permits inbound access to Package Manager |
 
 ### Distro Package Manager Health
 

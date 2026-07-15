@@ -2,8 +2,10 @@ schema_version: 3
 # Host security posture. SELinux Enforcing and AppArmor Enabled are the two
 # top causes of "process started but cannot bind/write/exec" tickets, so
 # both are gated as failures rather than informational. Firewall daemons get
-# both an active/inactive posture report AND a rule audit (when the daemon
-# is active) for the canonical Posit product ports.
+# an active/inactive posture report AND — per selected product — a rule audit
+# of the ports that product needs. The audit is backend-agnostic (it inspects
+# whichever of firewalld / iptables / nftables is active) and product-gated,
+# so a Workbench host is only judged on 8787, a Connect host on 3939, etc.
 checks:
   - id: sec.selinux.not-enforcing
     title: SELinux is not Enforcing
@@ -65,86 +67,13 @@ checks:
       os: [rhel-8, rhel-9, rhel-10]
     why: |
       firewalld is the default RHEL firewall. Reported here only as
-      posture; the rule audit below is the load-bearing check when the
-      daemon is active.
+      posture; the per-product port audits are the load-bearing checks
+      when the daemon is active.
     primitive: systemd
     with:
       unit: firewalld
       expect: inactive
       timeout_seconds: 5
-
-  - id: sec.firewalld.posit-ports-allowed
-    title: firewalld permits inbound Posit product ports (when active)
-    short_description: Auditing firewalld rules for Posit ports
-    category: Security
-    tags: [firewall, security, ports]
-    applies_to:
-      os: [rhel-8, rhel-9, rhel-10]
-    why: |
-      When firewalld is active, it must explicitly allow the canonical
-      Posit ports — 80, 443, 8787 (Workbench), 3939 (Connect), 4242
-      (Package Manager), and 5559 (Workbench / Connect Launcher). Without
-      explicit `firewall-cmd --add-port` rules in a permanent zone, end
-      users get connection-refused even though the product is running.
-      The front-door HTTP(S) ports 80/443 are blocking (FAIL) — every
-      user reaches the products through them; the per-product ports
-      (8787/3939/4242/5559) are advisory (WARN), since a deployment may
-      front them with a reverse proxy on 80/443 and never expose them
-      directly. This check no-ops when firewalld is inactive (covered
-      above).
-    remediation: |
-      Open the ports your products use, e.g.
-        sudo firewall-cmd --permanent --add-port=8787/tcp   # Workbench
-        sudo firewall-cmd --permanent --add-port=3939/tcp   # Connect
-        sudo firewall-cmd --permanent --add-port=4242/tcp   # PPM
-        sudo firewall-cmd --permanent --add-port=443/tcp    # HTTPS
-        sudo firewall-cmd --permanent --add-port=80/tcp     # HTTP redirect
-        sudo firewall-cmd --permanent --add-port=5559/tcp   # Launcher
-        sudo firewall-cmd --reload
-    references:
-      - https://docs.posit.co/getting-started/networking.html
-    primitive: cmd
-    with:
-      cmd: |
-        if ! command -v firewall-cmd >/dev/null 2>&1; then
-          echo "firewalld absent; skipping rule audit"; exit 0
-        fi
-        if ! systemctl is-active --quiet firewalld 2>/dev/null; then
-          echo "firewalld inactive; skipping rule audit"; exit 0
-        fi
-        ports=$(firewall-cmd --list-ports 2>/dev/null)
-        services=$(firewall-cmd --list-services 2>/dev/null)
-        echo "ports=$ports"
-        echo "services=$services"
-        missing_frontdoor=
-        missing_product=
-        for p in 80 443 8787 3939 4242 5559; do
-          # Match either explicit port rules or named services for 80/443.
-          if echo "$ports" | grep -qwE "${p}/tcp"; then continue; fi
-          case "$p" in
-            80)  echo "$services" | grep -qw http  && continue ;;
-            443) echo "$services" | grep -qw https && continue ;;
-          esac
-          case "$p" in
-            80|443) missing_frontdoor="$missing_frontdoor $p" ;;
-            *)      missing_product="$missing_product $p" ;;
-          esac
-        done
-        # Front-door 80/443 blocked → FAIL (exit 1). Only product ports
-        # blocked → WARN (exit 2). Report both sets so the SE sees the full
-        # picture either way.
-        if [ -n "$missing_frontdoor" ]; then
-          echo "missing-frontdoor-ports:$missing_frontdoor${missing_product:+ (also product:$missing_product)}"
-          exit 1
-        fi
-        if [ -n "$missing_product" ]; then
-          echo "missing-product-ports:$missing_product (front-door 80/443 open; product ports may be proxied — advisory)"
-          exit 2
-        fi
-        echo "all canonical Posit ports allowed"
-      expect_exit: 0
-      warn_exit: 2
-      timeout_seconds: 10
 
   - id: sec.iptables.inactive
     title: iptables service is not active (or rules permit Posit ports)
@@ -161,71 +90,6 @@ checks:
       expect: inactive
       timeout_seconds: 5
 
-  - id: sec.iptables.posit-ports-allowed
-    title: iptables permits inbound Posit product ports (when active)
-    short_description: Auditing iptables rules for Posit ports
-    category: Security
-    tags: [firewall, security, ports]
-    why: |
-      When the iptables service is active, the INPUT chain must accept
-      80, 443, 8787, 3939, 4242, and 5559/tcp — either via a default
-      ACCEPT policy, an explicit ACCEPT rule per port, or a stateful
-      ESTABLISHED,RELATED + per-port ACCEPT pair. The front-door HTTP(S)
-      ports 80/443 are blocking (FAIL); the per-product ports
-      (8787/3939/4242/5559) are advisory (WARN), since they may be fronted
-      by a reverse proxy on 80/443. No-ops when iptables is inactive or
-      absent.
-    remediation: |
-      Add per-port ACCEPT rules ahead of any DROP/REJECT, then persist:
-        sudo iptables -I INPUT -p tcp --dport 8787 -j ACCEPT
-        sudo iptables -I INPUT -p tcp --dport 3939 -j ACCEPT
-        sudo iptables -I INPUT -p tcp --dport 4242 -j ACCEPT
-        sudo iptables -I INPUT -p tcp --dport 443  -j ACCEPT
-        sudo iptables -I INPUT -p tcp --dport 80   -j ACCEPT
-        sudo iptables -I INPUT -p tcp --dport 5559 -j ACCEPT
-        sudo iptables-save | sudo tee /etc/sysconfig/iptables
-    primitive: cmd
-    with:
-      cmd: |
-        if ! command -v iptables >/dev/null 2>&1; then
-          echo "iptables absent; skipping rule audit"; exit 0
-        fi
-        if ! systemctl is-active --quiet iptables 2>/dev/null; then
-          echo "iptables service inactive; skipping rule audit"; exit 0
-        fi
-        rules=$(iptables -S INPUT 2>/dev/null)
-        echo "$rules"
-        # If INPUT policy is ACCEPT and there are no DROP/REJECT rules, all ports pass.
-        if echo "$rules" | head -1 | grep -q '^-P INPUT ACCEPT' && \
-           ! echo "$rules" | grep -qE '^-A INPUT.*-j (DROP|REJECT)'; then
-          echo "INPUT policy ACCEPT with no DROP/REJECT rules"
-          exit 0
-        fi
-        missing_frontdoor=
-        missing_product=
-        for p in 80 443 8787 3939 4242 5559; do
-          if ! echo "$rules" | grep -qE "^-A INPUT.* --dport ${p}\b.* -j ACCEPT"; then
-            case "$p" in
-              80|443) missing_frontdoor="$missing_frontdoor $p" ;;
-              *)      missing_product="$missing_product $p" ;;
-            esac
-          fi
-        done
-        # Front-door 80/443 blocked → FAIL (exit 1); only product ports
-        # blocked → WARN (exit 2).
-        if [ -n "$missing_frontdoor" ]; then
-          echo "missing-frontdoor-ports:$missing_frontdoor${missing_product:+ (also product:$missing_product)}"
-          exit 1
-        fi
-        if [ -n "$missing_product" ]; then
-          echo "missing-product-ports:$missing_product (front-door 80/443 open; product ports may be proxied — advisory)"
-          exit 2
-        fi
-        echo "all canonical Posit ports allowed"
-      expect_exit: 0
-      warn_exit: 2
-      timeout_seconds: 10
-
   - id: sec.nftables.inactive
     title: nftables service is not active (or rules permit Posit ports)
     short_description: Checking nftables service posture
@@ -233,67 +97,288 @@ checks:
     tags: [firewall, security]
     why: |
       nftables is the modern Linux firewall front-end. Reported here only
-      as posture; the rule audit below is the load-bearing check when the
-      daemon is active.
+      as posture; the per-product port audits are the load-bearing checks
+      when the daemon is active.
     primitive: systemd
     with:
       unit: nftables
       expect: inactive
       timeout_seconds: 5
 
-  - id: sec.nftables.posit-ports-allowed
-    title: nftables permits inbound Posit product ports (when active)
-    short_description: Auditing nftables ruleset for Posit ports
+  - id: sec.firewall.workbench-port
+    title: Firewall permits inbound access to Workbench
+    short_description: Auditing firewall rules for Workbench access
     category: Security
-    tags: [firewall, security, ports]
+    tags: [firewall, security, ports, workbench]
+    applies_to:
+      products: [workbench]
     why: |
-      When nftables is active, the input chain must accept 80, 443, 8787,
-      3939, 4242, and 5559/tcp via explicit `tcp dport <port> accept`
-      statements or a per-port set membership rule. The front-door HTTP(S)
-      ports 80/443 are blocking (FAIL); the per-product ports
-      (8787/3939/4242/5559) are advisory (WARN), since they may be fronted
-      by a reverse proxy on 80/443. No-ops when nftables is inactive or
-      absent.
+      For users to reach Workbench the host firewall must permit inbound
+      traffic on either the front-door HTTP(S) ports (80/443) — the normal
+      production posture, where a TLS reverse proxy terminates in front of
+      Workbench — or, failing that, Workbench's default port 8787. This
+      audit inspects whichever firewall backend is active (firewalld,
+      iptables, or nftables) and no-ops when none is active.
+
+      PASS: 80 or 443 is open (front door reachable).
+      WARN: only 8787 is open — clients hit Workbench directly on its
+      default port, which almost always means there is no local TLS/SSL
+      termination in front of it. Fine for a quick trial; revisit before
+      production.
+      FAIL: neither the front door nor 8787 is open — Workbench will be
+      unreachable.
     remediation: |
-      Add per-port accept rules to your input chain, e.g.
-        nft add rule inet filter input tcp dport {80,443,8787,3939,4242,5559} accept
-      then `nft list ruleset > /etc/nftables.conf` to persist.
+      Open the front-door ports if you terminate TLS at a reverse proxy:
+        sudo firewall-cmd --permanent --add-port=443/tcp
+        sudo firewall-cmd --permanent --add-port=80/tcp
+        sudo firewall-cmd --reload
+      Or, to expose Workbench directly (no local TLS), open 8787:
+        sudo firewall-cmd --permanent --add-port=8787/tcp && sudo firewall-cmd --reload
+      iptables:  sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT
+      nftables:  nft add rule inet filter input tcp dport {80,443} accept
+    references:
+      - https://docs.posit.co/ide/server-pro/access_and_security/network_port_and_address.html
     primitive: cmd
     with:
       cmd: |
-        if ! command -v nft >/dev/null 2>&1; then
-          echo "nft absent; skipping rule audit"; exit 0
+        PORT=8787
+        PRODUCT="Workbench"
+        # --- shared firewall port resolver (identical across product checks) ---
+        # Detect active backends. If none is active, nothing filters inbound
+        # traffic and the port question is moot (PASS noop).
+        fwd=0; ipt=0; nft=0
+        command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null && fwd=1
+        command -v iptables     >/dev/null 2>&1 && systemctl is-active --quiet iptables  2>/dev/null && ipt=1
+        command -v nft          >/dev/null 2>&1 && systemctl is-active --quiet nftables  2>/dev/null && nft=1
+        if [ "$fwd$ipt$nft" = "000" ]; then
+          echo "no active firewall backend; nothing filters inbound $PRODUCT traffic"; exit 0
         fi
-        if ! systemctl is-active --quiet nftables 2>/dev/null; then
-          echo "nftables service inactive; skipping rule audit"; exit 0
+        if [ "$fwd" = 1 ]; then
+          FWD_PORTS=$(firewall-cmd --list-ports 2>/dev/null)
+          # Expand every active *service* to its ports. A port opened via a
+          # named service (a custom rstudio.xml, or the builtin http/https
+          # services) is carried INSIDE the service definition and never shows
+          # up in --list-ports. Without this expansion the port looks blocked
+          # and we would emit a false WARN/FAIL.
+          FWD_SVC=""
+          for svc in $(firewall-cmd --list-services 2>/dev/null); do
+            FWD_SVC="$FWD_SVC $(firewall-cmd --info-service="$svc" 2>/dev/null | sed -n 's/^[[:space:]]*ports:[[:space:]]*//p')"
+          done
         fi
-        rs=$(nft -a list ruleset 2>/dev/null)
-        if [ -z "$rs" ]; then
-          echo "ruleset empty; default-permit"; exit 0
-        fi
-        echo "$rs" | head -80
-        missing_frontdoor=
-        missing_product=
-        for p in 80 443 8787 3939 4242 5559; do
-          # Match either an explicit "tcp dport <p>" or set membership "{ ... <p> ... }".
-          if ! echo "$rs" | grep -qE "tcp dport ($p\b|\{[^}]*\b${p}\b[^}]*\})[^,]*accept"; then
-            case "$p" in
-              80|443) missing_frontdoor="$missing_frontdoor $p" ;;
-              *)      missing_product="$missing_product $p" ;;
-            esac
+        [ "$ipt" = 1 ] && IPT=$(iptables -S INPUT 2>/dev/null)
+        [ "$nft" = 1 ] && NFT=$(nft -a list ruleset 2>/dev/null)
+        # is_open <port>: succeeds only if EVERY active backend permits the port.
+        is_open() {
+          _p="$1"
+          if [ "$fwd" = 1 ]; then
+            echo "$FWD_PORTS $FWD_SVC" | grep -qwE "${_p}/tcp" || return 1
           fi
-        done
-        # Front-door 80/443 blocked → FAIL (exit 1); only product ports
-        # blocked → WARN (exit 2).
-        if [ -n "$missing_frontdoor" ]; then
-          echo "missing-frontdoor-ports:$missing_frontdoor${missing_product:+ (also product:$missing_product)}"
-          exit 1
+          if [ "$ipt" = 1 ]; then
+            if echo "$IPT" | head -1 | grep -q '^-P INPUT ACCEPT' && \
+               ! echo "$IPT" | grep -qE '^-A INPUT.*-j (DROP|REJECT)'; then
+              : # default-permit
+            else
+              echo "$IPT" | grep -qE -- "^-A INPUT.* --dport ${_p}\b.* -j ACCEPT" || return 1
+            fi
+          fi
+          if [ "$nft" = 1 ] && [ -n "$NFT" ]; then
+            echo "$NFT" | grep -qE "tcp dport (${_p}\b|\{[^}]*\b${_p}\b[^}]*\})[^,]*accept" || return 1
+          fi
+          return 0
+        }
+        # --- end shared resolver ---
+        if is_open 80 || is_open 443; then
+          echo "front-door 80/443 open; $PRODUCT is reachable (typically via a TLS reverse proxy)"; exit 0
         fi
-        if [ -n "$missing_product" ]; then
-          echo "missing-product-ports:$missing_product (front-door 80/443 open; product ports may be proxied — advisory)"
-          exit 2
+        if is_open "$PORT"; then
+          echo "front-door 80/443 blocked, but $PRODUCT default port $PORT is open — clients reach $PRODUCT directly on $PORT, likely without local TLS/SSL termination"; exit 2
         fi
-        echo "all canonical Posit ports allowed"
+        echo "neither the front-door ports (80/443) nor the $PRODUCT port ($PORT) are permitted by the active firewall — $PRODUCT will be unreachable"; exit 1
+      expect_exit: 0
+      warn_exit: 2
+      timeout_seconds: 10
+
+  - id: sec.firewall.connect-port
+    title: Firewall permits inbound access to Connect
+    short_description: Auditing firewall rules for Connect access
+    category: Security
+    tags: [firewall, security, ports, connect]
+    applies_to:
+      products: [connect]
+    why: |
+      For users to reach Connect the host firewall must permit inbound
+      traffic on either the front-door HTTP(S) ports (80/443) — the normal
+      production posture, where a TLS reverse proxy terminates in front of
+      Connect — or, failing that, Connect's default port 3939. This audit
+      inspects whichever firewall backend is active (firewalld, iptables,
+      or nftables) and no-ops when none is active.
+
+      PASS: 80 or 443 is open (front door reachable).
+      WARN: only 3939 is open — clients hit Connect directly on its default
+      port, which almost always means there is no local TLS/SSL termination
+      in front of it. Fine for a quick trial; revisit before production.
+      FAIL: neither the front door nor 3939 is open — Connect will be
+      unreachable.
+    remediation: |
+      Open the front-door ports if you terminate TLS at a reverse proxy:
+        sudo firewall-cmd --permanent --add-port=443/tcp
+        sudo firewall-cmd --permanent --add-port=80/tcp
+        sudo firewall-cmd --reload
+      Or, to expose Connect directly (no local TLS), open 3939:
+        sudo firewall-cmd --permanent --add-port=3939/tcp && sudo firewall-cmd --reload
+      iptables:  sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT
+      nftables:  nft add rule inet filter input tcp dport {80,443} accept
+    references:
+      - https://docs.posit.co/connect/admin/getting-started/local-install/index.html
+    primitive: cmd
+    with:
+      cmd: |
+        PORT=3939
+        PRODUCT="Connect"
+        # --- shared firewall port resolver (identical across product checks) ---
+        # Detect active backends. If none is active, nothing filters inbound
+        # traffic and the port question is moot (PASS noop).
+        fwd=0; ipt=0; nft=0
+        command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null && fwd=1
+        command -v iptables     >/dev/null 2>&1 && systemctl is-active --quiet iptables  2>/dev/null && ipt=1
+        command -v nft          >/dev/null 2>&1 && systemctl is-active --quiet nftables  2>/dev/null && nft=1
+        if [ "$fwd$ipt$nft" = "000" ]; then
+          echo "no active firewall backend; nothing filters inbound $PRODUCT traffic"; exit 0
+        fi
+        if [ "$fwd" = 1 ]; then
+          FWD_PORTS=$(firewall-cmd --list-ports 2>/dev/null)
+          # Expand every active *service* to its ports. A port opened via a
+          # named service (a custom rstudio.xml, or the builtin http/https
+          # services) is carried INSIDE the service definition and never shows
+          # up in --list-ports. Without this expansion the port looks blocked
+          # and we would emit a false WARN/FAIL.
+          FWD_SVC=""
+          for svc in $(firewall-cmd --list-services 2>/dev/null); do
+            FWD_SVC="$FWD_SVC $(firewall-cmd --info-service="$svc" 2>/dev/null | sed -n 's/^[[:space:]]*ports:[[:space:]]*//p')"
+          done
+        fi
+        [ "$ipt" = 1 ] && IPT=$(iptables -S INPUT 2>/dev/null)
+        [ "$nft" = 1 ] && NFT=$(nft -a list ruleset 2>/dev/null)
+        # is_open <port>: succeeds only if EVERY active backend permits the port.
+        is_open() {
+          _p="$1"
+          if [ "$fwd" = 1 ]; then
+            echo "$FWD_PORTS $FWD_SVC" | grep -qwE "${_p}/tcp" || return 1
+          fi
+          if [ "$ipt" = 1 ]; then
+            if echo "$IPT" | head -1 | grep -q '^-P INPUT ACCEPT' && \
+               ! echo "$IPT" | grep -qE '^-A INPUT.*-j (DROP|REJECT)'; then
+              : # default-permit
+            else
+              echo "$IPT" | grep -qE -- "^-A INPUT.* --dport ${_p}\b.* -j ACCEPT" || return 1
+            fi
+          fi
+          if [ "$nft" = 1 ] && [ -n "$NFT" ]; then
+            echo "$NFT" | grep -qE "tcp dport (${_p}\b|\{[^}]*\b${_p}\b[^}]*\})[^,]*accept" || return 1
+          fi
+          return 0
+        }
+        # --- end shared resolver ---
+        if is_open 80 || is_open 443; then
+          echo "front-door 80/443 open; $PRODUCT is reachable (typically via a TLS reverse proxy)"; exit 0
+        fi
+        if is_open "$PORT"; then
+          echo "front-door 80/443 blocked, but $PRODUCT default port $PORT is open — clients reach $PRODUCT directly on $PORT, likely without local TLS/SSL termination"; exit 2
+        fi
+        echo "neither the front-door ports (80/443) nor the $PRODUCT port ($PORT) are permitted by the active firewall — $PRODUCT will be unreachable"; exit 1
+      expect_exit: 0
+      warn_exit: 2
+      timeout_seconds: 10
+
+  - id: sec.firewall.packagemanager-port
+    title: Firewall permits inbound access to Package Manager
+    short_description: Auditing firewall rules for Package Manager access
+    category: Security
+    tags: [firewall, security, ports, packagemanager]
+    applies_to:
+      products: [packagemanager]
+    why: |
+      For users to reach Package Manager the host firewall must permit
+      inbound traffic on either the front-door HTTP(S) ports (80/443) — the
+      normal production posture, where a TLS reverse proxy terminates in
+      front of Package Manager — or, failing that, Package Manager's default
+      port 4242. This audit inspects whichever firewall backend is active
+      (firewalld, iptables, or nftables) and no-ops when none is active.
+
+      PASS: 80 or 443 is open (front door reachable).
+      WARN: only 4242 is open — clients hit Package Manager directly on its
+      default port, which almost always means there is no local TLS/SSL
+      termination in front of it. Fine for a quick trial; revisit before
+      production.
+      FAIL: neither the front door nor 4242 is open — Package Manager will
+      be unreachable.
+    remediation: |
+      Open the front-door ports if you terminate TLS at a reverse proxy:
+        sudo firewall-cmd --permanent --add-port=443/tcp
+        sudo firewall-cmd --permanent --add-port=80/tcp
+        sudo firewall-cmd --reload
+      Or, to expose Package Manager directly (no local TLS), open 4242:
+        sudo firewall-cmd --permanent --add-port=4242/tcp && sudo firewall-cmd --reload
+      iptables:  sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT
+      nftables:  nft add rule inet filter input tcp dport {80,443} accept
+    references:
+      - https://docs.posit.co/rspm/admin/getting-started/installation/
+    primitive: cmd
+    with:
+      cmd: |
+        PORT=4242
+        PRODUCT="Package Manager"
+        # --- shared firewall port resolver (identical across product checks) ---
+        # Detect active backends. If none is active, nothing filters inbound
+        # traffic and the port question is moot (PASS noop).
+        fwd=0; ipt=0; nft=0
+        command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null && fwd=1
+        command -v iptables     >/dev/null 2>&1 && systemctl is-active --quiet iptables  2>/dev/null && ipt=1
+        command -v nft          >/dev/null 2>&1 && systemctl is-active --quiet nftables  2>/dev/null && nft=1
+        if [ "$fwd$ipt$nft" = "000" ]; then
+          echo "no active firewall backend; nothing filters inbound $PRODUCT traffic"; exit 0
+        fi
+        if [ "$fwd" = 1 ]; then
+          FWD_PORTS=$(firewall-cmd --list-ports 2>/dev/null)
+          # Expand every active *service* to its ports. A port opened via a
+          # named service (a custom rstudio.xml, or the builtin http/https
+          # services) is carried INSIDE the service definition and never shows
+          # up in --list-ports. Without this expansion the port looks blocked
+          # and we would emit a false WARN/FAIL.
+          FWD_SVC=""
+          for svc in $(firewall-cmd --list-services 2>/dev/null); do
+            FWD_SVC="$FWD_SVC $(firewall-cmd --info-service="$svc" 2>/dev/null | sed -n 's/^[[:space:]]*ports:[[:space:]]*//p')"
+          done
+        fi
+        [ "$ipt" = 1 ] && IPT=$(iptables -S INPUT 2>/dev/null)
+        [ "$nft" = 1 ] && NFT=$(nft -a list ruleset 2>/dev/null)
+        # is_open <port>: succeeds only if EVERY active backend permits the port.
+        is_open() {
+          _p="$1"
+          if [ "$fwd" = 1 ]; then
+            echo "$FWD_PORTS $FWD_SVC" | grep -qwE "${_p}/tcp" || return 1
+          fi
+          if [ "$ipt" = 1 ]; then
+            if echo "$IPT" | head -1 | grep -q '^-P INPUT ACCEPT' && \
+               ! echo "$IPT" | grep -qE '^-A INPUT.*-j (DROP|REJECT)'; then
+              : # default-permit
+            else
+              echo "$IPT" | grep -qE -- "^-A INPUT.* --dport ${_p}\b.* -j ACCEPT" || return 1
+            fi
+          fi
+          if [ "$nft" = 1 ] && [ -n "$NFT" ]; then
+            echo "$NFT" | grep -qE "tcp dport (${_p}\b|\{[^}]*\b${_p}\b[^}]*\})[^,]*accept" || return 1
+          fi
+          return 0
+        }
+        # --- end shared resolver ---
+        if is_open 80 || is_open 443; then
+          echo "front-door 80/443 open; $PRODUCT is reachable (typically via a TLS reverse proxy)"; exit 0
+        fi
+        if is_open "$PORT"; then
+          echo "front-door 80/443 blocked, but $PRODUCT default port $PORT is open — clients reach $PRODUCT directly on $PORT, likely without local TLS/SSL termination"; exit 2
+        fi
+        echo "neither the front-door ports (80/443) nor the $PRODUCT port ($PORT) are permitted by the active firewall — $PRODUCT will be unreachable"; exit 1
       expect_exit: 0
       warn_exit: 2
       timeout_seconds: 10
