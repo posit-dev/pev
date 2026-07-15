@@ -168,11 +168,11 @@ The full built-in catalog (run `pev list-checks` for the live version):
 | `sec.selinux.not-enforcing` | SELinux is not Enforcing |
 | `sec.apparmor.not-enabled` | AppArmor is not enabled |
 | `sec.firewalld.inactive` | firewalld is not active (or rules permit Posit ports) |
-| `sec.firewalld.posit-ports-allowed` | firewalld permits inbound Posit product ports (when active) |
 | `sec.iptables.inactive` | iptables service is not active (or rules permit Posit ports) |
-| `sec.iptables.posit-ports-allowed` | iptables permits inbound Posit product ports (when active) |
 | `sec.nftables.inactive` | nftables service is not active (or rules permit Posit ports) |
-| `sec.nftables.posit-ports-allowed` | nftables permits inbound Posit product ports (when active) |
+| `sec.firewall.workbench-port` | Firewall permits inbound access to Workbench |
+| `sec.firewall.connect-port` | Firewall permits inbound access to Connect |
+| `sec.firewall.packagemanager-port` | Firewall permits inbound access to Package Manager |
 
 ### Distro Package Manager Health
 
@@ -206,7 +206,8 @@ under `/opt`.
 | `lang.python.versioned-install` | At least one Python install at `/opt/python/<version>/bin/python3` |
 | `lang.python.uv-venv` | Unprivileged user can create a uv venv with the latest Python |
 | `lang.python.pip-venv` | Unprivileged user can create a venv via `python -m venv` + pip install |
-| `lang.quarto.present` | Quarto is available on PATH |
+| `lang.quarto.versioned-install` | At least one Quarto install at `/opt/quarto/<version>/bin/quarto` |
+| `lang.quarto.path` | Quarto on PATH |
 | `lang.idp.metadata` | IdP metadata or discovery URL is reachable |
 | `auth.pam.users-resolvable` | Customer-supplied PAM/SSO test user resolves through nsswitch |
 

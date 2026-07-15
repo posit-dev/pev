@@ -199,17 +199,26 @@ func newAssessCmd() *cobra.Command {
 			base := fmt.Sprintf("pev-report-%s-%s", facts.Hostname, ts)
 
 			wantMd, wantJSON := wantOutputs(outputs)
+			// reportPath is the path we point the operator at in the final
+			// "see report" line. Prefer the Markdown report (the human-facing
+			// artifact); fall back to the JSON sidecar when Markdown isn't
+			// written.
+			var reportPath string
 			if wantMd {
 				p, err := report.WriteMarkdown(outDir, base, rep)
 				if err != nil {
 					return err
 				}
+				reportPath = p
 				fmt.Println(p)
 			}
 			if wantJSON {
 				p, err := report.WriteJSON(outDir, base, rep)
 				if err != nil {
 					return err
+				}
+				if reportPath == "" {
+					reportPath = p
 				}
 				fmt.Println(p)
 			}
@@ -231,7 +240,7 @@ func newAssessCmd() *cobra.Command {
 				report.RenderSkipped(os.Stdout, rep, isTerminal(os.Stdout))
 			}
 
-			return assessExitError(rep.Summary)
+			return assessExitError(rep.Summary, reportPath)
 		},
 	}
 	c.Flags().StringSliceVar(&products, "products", nil, "products to assess (workbench,connect,packagemanager; alias ppm); auto-detected if empty")
@@ -258,8 +267,11 @@ func newAssessCmd() *cobra.Command {
 // (it renders as a failure on screen but does not gate the exit). Keep this
 // keyed solely on Summary.Fail; changing it is a deliberate decision, not a
 // drive-by.
-func assessExitError(s checks.Summary) error {
+func assessExitError(s checks.Summary, reportPath string) error {
 	if s.Fail > 0 {
+		if reportPath != "" {
+			return fmt.Errorf("%d failure(s) — see report: cat %s", s.Fail, reportPath)
+		}
 		return fmt.Errorf("%d failure(s) — see report", s.Fail)
 	}
 	return nil

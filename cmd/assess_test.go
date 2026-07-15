@@ -82,7 +82,7 @@ func TestAssessExitErrorOnlyFailIsFatal(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := assessExitError(tc.summary)
+			err := assessExitError(tc.summary, "")
 			if tc.wantErr && err == nil {
 				t.Fatalf("summary %+v: want error, got nil", tc.summary)
 			}
@@ -90,6 +90,24 @@ func TestAssessExitErrorOnlyFailIsFatal(t *testing.T) {
 				t.Fatalf("summary %+v: want nil, got %v", tc.summary, err)
 			}
 		})
+	}
+}
+
+// TestAssessExitErrorIncludesReportPath confirms the fatal error points the
+// operator at the on-disk report when a path is available, and degrades to the
+// plain message when it isn't.
+func TestAssessExitErrorIncludesReportPath(t *testing.T) {
+	fail := checks.Summary{Total: 1, Fail: 1}
+	path := "/tmp/pev-report-host-20260715T000000.md"
+
+	err := assessExitError(fail, path)
+	if err == nil || !strings.Contains(err.Error(), "cat "+path) {
+		t.Fatalf("want error with runnable %q, got %v", "cat "+path, err)
+	}
+
+	err = assessExitError(fail, "")
+	if err == nil || strings.Contains(err.Error(), "see report:") {
+		t.Fatalf("want plain 'see report' with no path, got %v", err)
 	}
 }
 

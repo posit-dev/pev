@@ -15,9 +15,12 @@ func newDiffCmd() *cobra.Command {
 		onlyChanges bool
 	)
 	c := &cobra.Command{
-		Use:   "diff <baseline.json> <current.json>",
+		Use:   "diff <report.json> <report.json>",
 		Short: "Compare two report JSON sidecars; exit 1 on regressions",
-		Args:  cobra.ExactArgs(2),
+		Long: "Compare two report JSON sidecars. The newer report (by started_at) is\n" +
+			"always treated as current and the older as baseline, regardless of the\n" +
+			"order the files are passed in. Exits 1 on regressions.",
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := report.ReadJSON(args[0])
 			if err != nil {
@@ -27,7 +30,10 @@ func newDiffCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			d, err := report.Compute(a, b)
+			// Order by started_at so the most recent report is always current
+			// and the older is baseline, independent of argument order.
+			baseline, current := report.OrderByRecency(a, b)
+			d, err := report.Compute(baseline, current)
 			if err != nil {
 				return err
 			}

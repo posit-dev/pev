@@ -129,8 +129,15 @@ install -m 0755 "${tmp}/${binary_name}" "${dest}/pev"
 
 log "installed pev ${version} to ${dest}/pev"
 
-# Hint about PATH if a non-root user installed somewhere not on PATH.
+# Hint about PATH if the install dir is not on PATH. Print the exact,
+# copy-paste command to run pev now (the chained `... && pev assess` in the
+# docs fails here because this shell's PATH won't pick up ${dest} until a new
+# login), plus the export to make `pev` resolve permanently.
 case ":${PATH}:" in
   *:"${dest}":*) ;;
-  *) log "note: ${dest} is not on PATH; add it (e.g. export PATH=\"${dest}:\$PATH\")" ;;
+  *)
+    log "note: ${dest} is not on PATH."
+    log "  run pev now with: ${dest}/pev assess"
+    log "  or add it to PATH: export PATH=\"${dest}:\$PATH\""
+    ;;
 esac
