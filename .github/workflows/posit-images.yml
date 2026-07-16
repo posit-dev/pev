@@ -37,11 +37,13 @@ jobs:
           - product: workbench
             image: docker.io/posit/workbench@sha256:3d76d4b38651287d158c59fe82fc7e7d5bb8de1a1178a922bd50a90892d0d87a
             # Expected fails on the stock workbench image. Update with care.
+            #   lang.quarto.versioned-install     — image bundles Quarto outside the /opt/quarto/<ver> layout the check verifies
             #   pkg-mgr.apt.repolist-fresh        — apt lists are baked at image-build time and age past 30d
             #   sec.apparmor.not-enabled          — runner host has AppArmor enabled; check observes the host kernel
             #   sizing.workbench.minimum          — GH runner is below the 100 GB / 4 GB customer minimum
             #   storage.acl.posix.home-and-local  — image ships without acl/setfacl
             allowed_unexpected: |
+              lang.quarto.versioned-install
               pkg-mgr.apt.repolist-fresh
               sec.apparmor.not-enabled
               sizing.workbench.minimum
@@ -49,6 +51,7 @@ jobs:
           - product: connect
             image: docker.io/posit/connect@sha256:8de3d13ba5fdd46576ecdcbdff43420305407192d2c0de462545eba1ba082de9
             # Expected fails on the stock connect image. Update with care.
+            #   lang.quarto.versioned-install — image bundles Quarto outside the /opt/quarto/<ver> layout the check verifies
             #   pkg-mgr.apt.repolist-fresh — apt lists are baked at image-build time and age past 30d
             #   pkg.libcurl-dev            — build-deps for analytics packages not pre-installed
             #   pkg.libxml2-dev            — same
@@ -58,6 +61,7 @@ jobs:
             # (connect.smtp.reachable now SKIPs when no smtp host is supplied, so it
             #  no longer appears in the fail/unknown set and needs no allowlist entry.)
             allowed_unexpected: |
+              lang.quarto.versioned-install
               pkg-mgr.apt.repolist-fresh
               pkg.libcurl-dev
               pkg.libxml2-dev
