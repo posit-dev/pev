@@ -14,6 +14,8 @@
 #   PEV_VERSION     — release tag to pin (default: latest, e.g. v0.0.2)
 #   PEV_INSTALL_DIR — destination directory (default: ~/.local/bin for non-root,
 #                     /usr/local/bin for root)
+#   PEV_VERBOSE     — set to 1 to surface the SHA-256-only fallback warning
+#                     printed when cosign is not on PATH (default: quiet)
 #
 # Behavior:
 #   - Detects Linux amd64 / arm64; refuses other platforms.
@@ -21,9 +23,9 @@
 #     pev_<version>_checksums.txt; verifies SHA-256 before install.
 #   - When `cosign` is on PATH, also verifies the keyless signature on the
 #     checksums file before trusting any SHA-256. Without cosign the
-#     installer prints a warning and proceeds with SHA-256-only — set
-#     PEV_REQUIRE_COSIGN=1 to make the missing-cosign case a hard error
-#     for regulated installs.
+#     installer proceeds with SHA-256-only (set PEV_VERBOSE=1 to see the
+#     downgrade warning) — set PEV_REQUIRE_COSIGN=1 to make the
+#     missing-cosign case a hard error for regulated installs.
 #   - Always overwrites: re-running upgrades in place.
 #
 # Verifying this script before running it is recommended for regulated
@@ -37,6 +39,10 @@ RELEASES_DOWNLOAD="https://github.com/${REPO}/releases/download"
 
 err() { printf 'pev-install: %s\n' "$*" >&2; exit 1; }
 log() { printf 'pev-install: %s\n' "$*"; }
+# vlog prints only when PEV_VERBOSE=1; used for advisory notices (e.g. the
+# cosign-absent SHA-256-only fallback) that are noise on the happy path but
+# matter to operators auditing supply-chain verification.
+vlog() { [ "${PEV_VERBOSE:-0}" = "1" ] && printf 'pev-install: %s\n' "$*"; return 0; }
 
 need() { command -v "$1" >/dev/null 2>&1 || err "missing required tool: $1"; }
 need curl
@@ -114,7 +120,7 @@ if command -v cosign >/dev/null 2>&1; then
 elif [ "${PEV_REQUIRE_COSIGN:-0}" = "1" ]; then
   err "cosign not on PATH and PEV_REQUIRE_COSIGN=1 — install cosign or unset the variable"
 else
-  log "warning: cosign not on PATH; falling back to SHA-256 only (set PEV_REQUIRE_COSIGN=1 to hard-fail)"
+  vlog "warning: cosign not on PATH; falling back to SHA-256 only (set PEV_REQUIRE_COSIGN=1 to hard-fail)"
 fi
 
 # sha256sum -c needs the checksum line in its CWD-relative form. We grep the
