@@ -26,3 +26,5 @@ pev-log-*.log
 # Python (test/e2e/validate-report.py byproducts)
 __pycache__/
 *.pyc
+# roborev snapshots
+/.roborev/
