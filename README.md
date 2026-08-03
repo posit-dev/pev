@@ -35,8 +35,8 @@ Detects amd64 / arm64, downloads the latest release, verifies the SHA-256 agains
 Pin a version or override the destination:
 
 ```bash
-PEV_VERSION=v0.6.0 PEV_INSTALL_DIR=/opt/bin \
-  curl -fsSL https://raw.githubusercontent.com/posit-dev/pev/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/posit-dev/pev/main/scripts/install.sh | \
+  PEV_VERSION=v0.6.0 PEV_INSTALL_DIR=/opt/bin sh
 ```
 
 If your security review requires reading the script before execution, save and inspect first:
