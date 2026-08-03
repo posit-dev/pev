@@ -1,6 +1,6 @@
 # pev — Posit Environment Validator
 
-Assess Linux readiness before installing **Posit Workbench**, **Posit Connect**, and **Posit Package Manager**. One static binary, no runtime dependencies on the target system, runs as root or non-root, writes a Markdown report and a JSON sidecar that diffs cleanly between runs.
+Assess Linux readiness before you install Posit Workbench, Posit Connect, or Posit Package Manager. pev ships as one static binary with no runtime dependencies on the target system, runs as root or non-root, and writes a Markdown report plus a JSON sidecar that diffs cleanly between runs.
 
 [![ci](https://github.com/posit-dev/pev/actions/workflows/ci.yml/badge.svg)](https://github.com/posit-dev/pev/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/posit-dev/pev)](https://github.com/posit-dev/pev/releases/latest)
@@ -10,13 +10,15 @@ Assess Linux readiness before installing **Posit Workbench**, **Posit Connect**,
 
 ## Why pev exists
 
-Today, the prereq verification call before a Posit install is a manual checklist exercise driven by a runbook, interpreted live by an SE on a Webex call. That process is slow, inconsistent across SEs, and produces no shareable artifact. pev replaces the manual pass with an automated assessment that defaults to discovery (it shells out to the same OS commands a Linux admin would type at the terminal) and produces a report identifying every issue *before* the install session — turning the prereq meeting from "let me poke around your box" into "let's review the report you ran yesterday." Every failed check is worth investigating; pev does not try to predict which failures the customer can defer.
+An SE walks the prereq runbook by hand on a Webex call, reading commands to the customer and interpreting the output live. Nothing from that call is shareable, and two SEs assessing the same host reach different conclusions. pev runs the same OS commands a Linux admin would type and writes a report the customer can send you the day before the install session.
+
+pev reports problems at two levels. A FAIL means the install will likely break or land the customer on an unsupported configuration, and it is worth investigating before you proceed. A WARN means the host can be installed on as-is, but you should note the condition. pev does not grade FAILs against each other or predict which ones a customer can defer.
 
 ## Scope
 
-**pev assesses the host's readiness BEFORE any Posit product is installed.** It checks OS support, sizing, network egress, system packages, customer-supplied SSL cert/key validity, R/Python/Quarto presence at the expected paths, IdP and SMTP reachability — every prereq the customer has to satisfy ahead of the install session.
+pev assesses the host before any Posit product is installed. It checks OS support, sizing, network egress, system packages, customer-supplied SSL cert/key validity, R/Python/Quarto presence at the expected paths, and IdP and SMTP reachability. Those are the prereqs the customer has to satisfy ahead of the install session.
 
-**pev explicitly does NOT validate installed products.** License activation (`rstudio-server license-manager status`), product binary presence, post-install config files (`rserver.conf`, `rstudio-connect.gcfg`, `rstudio-pm.gcfg`), and content-deployment smoke tests are the responsibility of [`posit-dev/vip`](https://github.com/posit-dev/vip). If a check requires a Posit product to be installed first, it belongs in `vip`, not here.
+pev does not validate installed products. License activation (`rstudio-server license-manager status`), product binary presence, post-install config files (`rserver.conf`, `rstudio-connect.gcfg`, `rstudio-pm.gcfg`), and content-deployment smoke tests belong to [`posit-dev/vip`](https://github.com/posit-dev/vip). If a check requires a Posit product to be installed first, put it in `vip`, not here.
 
 ## Install
 
@@ -28,18 +30,12 @@ curl -fsSL https://raw.githubusercontent.com/posit-dev/pev/main/scripts/install.
 
 Detects amd64 / arm64, downloads the latest release, verifies the SHA-256 against the published `pev_<version>_checksums.txt`, and installs to `~/.local/bin/pev` (or `/usr/local/bin/pev` when run as root). Re-running upgrades in place.
 
-> **Do not pipe the installer into `pev`** (`curl ... | sh | pev assess`). That makes `pev`'s stdin the installer's pipe rather than your terminal, so `pev` detects no TTY and silently runs in `--yes` mode — accepting every discovered default without prompting. To install and then assess in one line, join them with `&&` so `pev` keeps your terminal:
->
-> ```bash
-> curl -fsSL https://raw.githubusercontent.com/posit-dev/pev/main/scripts/install.sh | sh && pev assess
-> ```
->
-> For unattended/CI runs, accept the defaults explicitly with `pev assess --non-interactive` instead of relying on TTY detection.
+> Do not pipe the installer into `pev` (`curl ... | sh | pev assess`). That makes `pev`'s stdin the installer's pipe rather than your terminal, so `pev` detects no TTY and silently runs in `--yes` mode, accepting every discovered default without prompting. The `&&` form above keeps your terminal attached to `pev`. For unattended and CI runs, accept the defaults explicitly with `pev assess --non-interactive` rather than relying on TTY detection.
 
 Pin a version or override the destination:
 
 ```bash
-PEV_VERSION=v0.0.2 PEV_INSTALL_DIR=/opt/bin \
+PEV_VERSION=v0.6.0 PEV_INSTALL_DIR=/opt/bin \
   curl -fsSL https://raw.githubusercontent.com/posit-dev/pev/main/scripts/install.sh | sh
 ```
 
@@ -56,7 +52,7 @@ sh install.sh
 Releases are signed with [cosign](https://github.com/sigstore/cosign) keyless OIDC. For environments that require manual signature verification:
 
 ```bash
-VERSION=v0.5.0  # or whichever release you want
+VERSION=v0.6.0  # or whichever release you want
 # Download the binary under its published name so it matches the checksum entry.
 curl -fsSL https://github.com/posit-dev/pev/releases/download/${VERSION}/pev_linux_amd64                          -o pev_linux_amd64
 curl -fsSL https://github.com/posit-dev/pev/releases/download/${VERSION}/pev_${VERSION#v}_checksums.txt           -o checksums.txt
@@ -87,17 +83,20 @@ A trimmed report excerpt:
 ```
 # pev report — db-prod-01 — 2026-06-03 14:22:05 UTC
 
+**pev** v0.6.0 · schema 3 · duration 41s
+
 ## Summary
-| Pass | Fail | Skip | Unknown |
-|---:|---:|---:|---:|
-|   53 |    5 |    3 |    0 |
+
+| Pass | Warn | Fail | Skip | Unknown |
+|---:|---:|---:|---:|---:|
+| 51 | 2 | 5 | 3 | 0 |
 
 **5 failure(s)** — investigate before proceeding.
 ```
 
 ## What it checks
 
-Every built-in check maps to an authoritative Posit doc and (where applicable) to a row in the customer prereq runbook. Run `pev list-checks` to dump the catalog at any time. Every FAIL is worth investigating; pev does not classify findings into tiers.
+Every built-in check maps to an authoritative Posit doc and (where applicable) to a row in the customer prereq runbook. Run `pev list-checks` to dump the catalog at any time.
 
 The full built-in catalog (run `pev list-checks` for the live version):
 
@@ -204,6 +203,7 @@ under `/opt`.
 | `lang.r.versioned-install` | At least one R install at `/opt/R/<version>/bin/R` |
 | `lang.r.renv-user-install` | Unprivileged user can install renv with the latest R |
 | `lang.python.versioned-install` | At least one Python install at `/opt/python/<version>/bin/python3` |
+| `lang.python.venv-tooling` | A Python venv tool (uv or pip) is on PATH |
 | `lang.python.uv-venv` | Unprivileged user can create a uv venv with the latest Python |
 | `lang.python.pip-venv` | Unprivileged user can create a venv via `python -m venv` + pip install |
 | `lang.quarto.versioned-install` | At least one Quarto install at `/opt/quarto/<version>/bin/quarto` |
@@ -221,11 +221,11 @@ under `/opt`.
 | `ppm.ssl.cert-key-match` | Package Manager SSL certificate and key are paired |
 | `ppm.egress.sync` | Package Manager can reach the Posit Package Service |
 
-Anything that requires a Posit product to be already installed (license-manager status, parsing rserver.conf, etc.) is **out of scope** — that's `vip`'s job. See [docs/runbook-mapping.md](docs/runbook-mapping.md) for the full prereq → check ID table and the explicit out-of-scope list.
+Anything that requires a Posit product to be installed already (license-manager status, parsing rserver.conf) is out of scope, since that is `vip`'s job. See [docs/runbook-mapping.md](docs/runbook-mapping.md) for the full prereq to check-ID table and the explicit out-of-scope list.
 
 ## Permissions
 
-pev runs as root or non-root. The pre-install catalog is mostly readable by any user (DNS, HTTP, /opt/* listings, sysctl). Checks that need root (e.g. reading customer-supplied SSL keys at mode 0600) are gated by `requires_root: true` and emit `SKIPPED (requires root)` when run as a normal user. The run never aborts.
+pev runs as root or non-root. Any user can run most of the pre-install catalog (DNS, HTTP, /opt/* listings, sysctl). Checks that need root, such as reading a customer-supplied SSL key at mode 0600, carry `requires_root: true` and emit `SKIPPED (requires root)` for a normal user rather than aborting the run.
 
 ```bash
 sudo ./pev assess         # full coverage, including SSL-key checks
@@ -260,34 +260,40 @@ Every `pev assess` writes three files:
 - `pev-report-<host>-<TS>.json` — machine sidecar (stable, sorted, schema-versioned)
 - `pev-log-<TS>.log` — logrus JSON-lines for debugging
 
-`pev diff a.json b.json` classifies every check as **regression** (PASS→FAIL/UNKNOWN), **improvement** (FAIL→PASS), **status changed**, **added**, **removed**, or **evidence-only changed**. Exit code 1 iff regressions exist — perfect for a CI gate during install runbook automation.
+`pev diff a.json b.json` ranks statuses on the ladder PASS < WARN < FAIL/UNKNOWN, then classifies every check as a regression (a move up the ladder), an improvement (a move down it), a status change off the ladder, added, removed, or evidence-only changed. It exits 1 when regressions exist, which makes it usable as a CI gate during install runbook automation.
+
+`pev assess` itself exits non-zero only on FAIL. A run with warnings and no failures exits 0.
 
 ## Supported OS
 
-| OS                       | Status                  | Notes                                                |
-|--------------------------|-------------------------|------------------------------------------------------|
-| Ubuntu 22.04             | Supported               |                                                       |
-| Ubuntu 24.04             | Supported               |                                                       |
-| Ubuntu 20.04             | **Unsupported**         | EOL across all three Posit products                   |
-| RHEL 8 / 9 / 10          | Supported               | UBI requires registry auth                            |
-| Alma Linux 8 / 9 / 10    | Supported               | RHEL-family rebuild; collapsed onto `rhel-<major>` ID |
-| Rocky Linux 8 / 9 / 10   | Supported               | Same as Alma                                          |
+| OS                       | Status      | Notes                                                                       |
+|--------------------------|-------------|-----------------------------------------------------------------------------|
+| Ubuntu 22.04             | Supported   |                                                                             |
+| Ubuntu 24.04             | Supported   |                                                                             |
+| Ubuntu 20.04             | Unsupported | EOL across all three Posit products                                         |
+| Ubuntu 26.04             | Unsupported | Not yet on Posit's supported list                                           |
+| RHEL 8 / 9 / 10          | Supported   | UBI requires registry auth                                                  |
+| Alma Linux 8 / 9 / 10    | Supported   | RHEL-family rebuild; collapsed onto `rhel-<major>` ID                       |
+| Rocky Linux 8 / 9 / 10   | Supported   | Same as Alma                                                                |
+| Oracle Linux 8 / 9 / 10  | Supported   | Same as Alma                                                                |
+| CentOS Linux 8           | Supported   | Binary-compatible RHEL 8 rebuild                                            |
+| CentOS Stream 9 / 10     | Unsupported | Upstream of RHEL, not a binary-compatible rebuild; use RHEL, Alma, or Rocky  |
 
-CI exercises Ubuntu 22.04, Ubuntu 24.04, Alma 9, and Alma 10 containers. Real RHEL is validated pre-release on customer-representative VMs.
+CI exercises Ubuntu 22.04, Ubuntu 24.04, Alma 9, and Alma 10 containers. Maintainers validate real RHEL before each release on customer-representative VMs.
 
 ## Building from source
 
 ```bash
 git clone https://github.com/posit-dev/pev
 cd pev
-make build       # CGO_ENABLED=0 -> ~12 MB static binary
+make build       # CGO_ENABLED=0 -> static binary (~15 MB; release builds strip to ~10 MB)
 make test        # go test ./... -race -shuffle=on
 make lint        # golangci-lint
 make snapshot    # goreleaser release --snapshot --clean
 make e2e         # local docker matrix (Ubuntu 22/24, Alma 9/10)
 ```
 
-Requires Go 1.22+.
+Requires Go 1.26 or newer (see `go.mod`).
 
 ## Contributing
 
